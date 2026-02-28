@@ -106,3 +106,6 @@ out/
 # Local package stores
 .pnpm-store/
 .pnpm-store-temp/
+
+# IDE
+.idea/
