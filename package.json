@@ -21,6 +21,14 @@
   },
   "author": "ROG <luanroger.dev@gmail.com>",
   "license": "MIT",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "msw",
+      "electron-winstaller"
+    ]
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.3.14",
     "@electron-forge/cli": "^7.11.1",
