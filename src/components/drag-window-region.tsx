@@ -33,14 +33,14 @@ export default function DragWindowRegion({ title }: DragWindowRegionProps) {
 
   return (
     <div className="flex w-full items-stretch justify-between">
-      <div className="draglayer w-full">
+      <div className="draglayer flex min-w-0 flex-1 items-center">
         {title && !isMacOS && (
-          <div className="flex flex-1 select-none whitespace-nowrap p-2 text-gray-400 text-xs">
+          <div className="flex min-w-0 flex-1 select-none whitespace-nowrap px-3 py-2 text-xs">
             {title}
           </div>
         )}
         {isMacOS && (
-          <div className="flex flex-1 p-2">
+          <div className="flex h-9 flex-1">
             {/* Maintain the same height but do not display content */}
           </div>
         )}
@@ -51,12 +51,16 @@ export default function DragWindowRegion({ title }: DragWindowRegionProps) {
 }
 
 function WindowButtons() {
+  const buttonClass =
+    "no-drag flex h-9 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
+
   return (
-    <div className="flex">
+    <div className="no-drag flex border-border/60 border-l">
       <button
-        className="p-2 hover:bg-slate-300"
+        aria-label="最小化窗口"
+        className={buttonClass}
         onClick={minimizeWindow}
-        title="Minimize"
+        title="最小化"
         type="button"
       >
         <svg
@@ -70,9 +74,10 @@ function WindowButtons() {
         </svg>
       </button>
       <button
-        className="p-2 hover:bg-slate-300"
+        aria-label="最大化窗口"
+        className={buttonClass}
         onClick={maximizeWindow}
-        title="Maximize"
+        title="最大化"
         type="button"
       >
         <svg
@@ -93,9 +98,10 @@ function WindowButtons() {
         </svg>
       </button>
       <button
-        className="p-2 hover:bg-red-300"
+        aria-label="关闭窗口"
+        className={`${buttonClass} hover:bg-destructive/20 hover:text-destructive`}
         onClick={closeWindow}
-        title="Close"
+        title="关闭"
         type="button"
       >
         <svg

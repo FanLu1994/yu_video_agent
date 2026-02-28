@@ -1,4 +1,3 @@
-import { completeSimple } from "@mariozechner/pi-ai";
 import type {
   ProviderConfig,
   SaveProviderConfigInput,
@@ -125,6 +124,7 @@ export class ProviderConfigService {
     }
 
     try {
+      const { completeSimple } = await import("@mariozechner/pi-ai");
       const model = buildPiModel(provider);
       const response = await completeSimple(
         model,
