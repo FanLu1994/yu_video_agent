@@ -24,6 +24,13 @@ interface ProviderFormState {
   apiKey: string;
 }
 
+interface ProviderPreset {
+  key: string;
+  label: string;
+  description: string;
+  form: Omit<ProviderFormState, "apiKey">;
+}
+
 const DEFAULT_FORM: ProviderFormState = {
   id: "",
   kind: "openai-compatible",
@@ -37,17 +44,105 @@ const DEFAULT_FORM: ProviderFormState = {
   apiKey: "",
 };
 
+const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    key: "openai-main",
+    label: "OpenAI 官方",
+    description: "适合直接接 OpenAI API。",
+    form: {
+      id: "openai-main",
+      kind: "openai-compatible",
+      displayName: "OpenAI 主线路",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-4o-mini",
+      enabled: true,
+      timeoutMs: "30000",
+      retryAttempts: "2",
+      retryBackoffMs: "1000",
+    },
+  },
+  {
+    key: "anthropic-main",
+    label: "Anthropic 官方",
+    description: "适合 Claude 系列模型。",
+    form: {
+      id: "anthropic-main",
+      kind: "anthropic",
+      displayName: "Anthropic 主线路",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-sonnet-4-20250514",
+      enabled: true,
+      timeoutMs: "30000",
+      retryAttempts: "2",
+      retryBackoffMs: "1000",
+    },
+  },
+  {
+    key: "deepseek-main",
+    label: "DeepSeek 官方",
+    description: "常用的国内模型服务（OpenAI 兼容）。",
+    form: {
+      id: "deepseek-main",
+      kind: "domestic-compatible",
+      displayName: "DeepSeek 主线路",
+      baseUrl: "https://api.deepseek.com/v1",
+      model: "deepseek-chat",
+      enabled: true,
+      timeoutMs: "30000",
+      retryAttempts: "2",
+      retryBackoffMs: "1000",
+    },
+  },
+  {
+    key: "ollama-local",
+    label: "Ollama 本地",
+    description: "本地私有模型，默认走 OpenAI 兼容接口。",
+    form: {
+      id: "ollama-local",
+      kind: "openai-compatible",
+      displayName: "Ollama 本地服务",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      model: "qwen2.5:7b-instruct",
+      enabled: true,
+      timeoutMs: "45000",
+      retryAttempts: "1",
+      retryBackoffMs: "500",
+    },
+  },
+  {
+    key: "minimax-voice",
+    label: "MiniMax 音色克隆",
+    description: "用于音色克隆链路（speech 模型）。",
+    form: {
+      id: "minimax",
+      kind: "minimax",
+      displayName: "MiniMax",
+      baseUrl: "https://api.minimaxi.com/v1",
+      model: "speech-2.8-hd",
+      enabled: true,
+      timeoutMs: "30000",
+      retryAttempts: "2",
+      retryBackoffMs: "1000",
+    },
+  },
+];
+
 function ProvidersPage() {
   const [providers, setProviders] = useState<
     Awaited<ReturnType<typeof listProviders>>
   >([]);
   const [form, setForm] = useState<ProviderFormState>(DEFAULT_FORM);
+  const [presetKey, setPresetKey] = useState(PROVIDER_PRESETS[0].key);
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
 
   const selectedProvider = useMemo(
     () => providers.find((item) => item.id === form.id),
     [form.id, providers]
+  );
+  const selectedPreset = useMemo(
+    () => PROVIDER_PRESETS.find((item) => item.key === presetKey),
+    [presetKey]
   );
 
   async function refresh() {
@@ -81,6 +176,19 @@ function ProvidersPage() {
       retryBackoffMs: String(provider.retry?.backoffMs ?? 1000),
       apiKey: "",
     });
+  }
+
+  function applyPresetToForm() {
+    const preset = PROVIDER_PRESETS.find((item) => item.key === presetKey);
+    if (!preset) {
+      return;
+    }
+
+    setForm({
+      ...preset.form,
+      apiKey: "",
+    });
+    setMessage(`已套用预设：${preset.label}。你仍可继续手动修改各字段。`);
   }
 
   async function onSave() {
@@ -148,15 +256,45 @@ function ProvidersPage() {
           <section className="rounded-lg border border-border bg-card p-4">
             <div className="mb-3 flex items-center justify-between">
               <h1 className="font-semibold text-lg">模型配置</h1>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setForm(DEFAULT_FORM);
-                  setMessage("表单已重置。");
-                }}
-              >
-                重置
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setForm(DEFAULT_FORM);
+                    setMessage("表单已重置。");
+                  }}
+                >
+                  重置
+                </Button>
+              </div>
+            </div>
+            <div className="mb-4 rounded-md border border-border bg-muted/30 p-3">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
+                  <span>常用预设</span>
+                  <select
+                    className="rounded-md border border-input bg-background px-2 py-1"
+                    value={presetKey}
+                    onChange={(event) => setPresetKey(event.target.value)}
+                  >
+                    {PROVIDER_PRESETS.map((preset) => (
+                      <option key={preset.key} value={preset.key}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Button
+                  className="md:mt-5"
+                  variant="outline"
+                  onClick={applyPresetToForm}
+                >
+                  套用预设
+                </Button>
+              </div>
+              <p className="mt-2 text-muted-foreground text-xs">
+                {selectedPreset?.description ?? "选择后可一键填充。"}
+              </p>
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <label className="flex flex-col gap-1 text-sm">
