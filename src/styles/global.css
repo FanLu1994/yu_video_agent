@@ -119,6 +119,12 @@
 }
 
 @layer base {
+  html,
+  body,
+  #app {
+    @apply h-full;
+  }
+
   * {
     @apply border-border outline-ring/50;
   }
@@ -140,7 +146,7 @@
         var(--background) 45%,
         color-mix(in oklab, var(--background) 85%, var(--muted)) 100%
       );
-    @apply overflow-hidden bg-background font-sans text-foreground antialiased;
+    @apply h-full overflow-hidden bg-background font-sans text-foreground antialiased;
   }
   html {
     @apply font-sans;
@@ -199,11 +205,11 @@
   }
 
   .app-page {
-    @apply grid h-full min-h-0 grid-cols-1 gap-3 p-3 lg:p-4 xl:grid-cols-12;
+    @apply grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] gap-3 overflow-hidden p-3 lg:p-4 xl:grid-cols-12;
   }
 
   .app-panel {
-    @apply flex min-h-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/90 shadow-[0_22px_38px_-30px_rgba(10,24,47,0.52)];
+    @apply flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/90 shadow-[0_22px_38px_-30px_rgba(10,24,47,0.52)];
   }
 
   .app-panel-header {
@@ -211,7 +217,7 @@
   }
 
   .app-panel-body {
-    @apply min-h-0 flex-1 overflow-auto p-4;
+    @apply min-h-0 flex-1 overflow-auto overscroll-contain p-4;
   }
 
   .field-grid {

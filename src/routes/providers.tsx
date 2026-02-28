@@ -1,8 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, useTransition } from "react";
-import { deleteProviderConfig, listProviders, saveProviderConfig, testProviderConnection } from "@/actions/provider";
-import NavigationMenu from "@/components/navigation-menu";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from "react";
+import {
+  deleteProviderConfig,
+  listProviders,
+  saveProviderConfig,
+  testProviderConnection,
+} from "@/actions/provider";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type ProviderKind =
   | "openai-compatible"
@@ -11,24 +22,26 @@ type ProviderKind =
   | "domestic-compatible"
   | "minimax";
 
+type ProvidersTab = "edit" | "saved";
+
 interface ProviderFormState {
+  apiKey: string;
+  baseUrl: string;
+  displayName: string;
+  enabled: boolean;
   id: string;
   kind: ProviderKind;
-  displayName: string;
-  baseUrl: string;
   model: string;
-  enabled: boolean;
-  timeoutMs: string;
   retryAttempts: string;
   retryBackoffMs: string;
-  apiKey: string;
+  timeoutMs: string;
 }
 
 interface ProviderPreset {
-  key: string;
-  label: string;
   description: string;
   form: Omit<ProviderFormState, "apiKey">;
+  key: string;
+  label: string;
 }
 
 const DEFAULT_FORM: ProviderFormState = {
@@ -132,7 +145,9 @@ function ProvidersPage() {
     Awaited<ReturnType<typeof listProviders>>
   >([]);
   const [form, setForm] = useState<ProviderFormState>(DEFAULT_FORM);
+  const [activeTab, setActiveTab] = useState<ProvidersTab>("edit");
   const [presetKey, setPresetKey] = useState(PROVIDER_PRESETS[0].key);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
 
@@ -140,23 +155,26 @@ function ProvidersPage() {
     () => providers.find((item) => item.id === form.id),
     [form.id, providers]
   );
+
   const selectedPreset = useMemo(
     () => PROVIDER_PRESETS.find((item) => item.key === presetKey),
     [presetKey]
   );
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const rows = await listProviders();
     setProviders(rows);
-  }
+  }, []);
 
   useEffect(() => {
     startTransition(() => {
       refresh().catch((error) => {
-        setMessage(error instanceof Error ? error.message : "加载模型配置失败。");
+        setMessage(
+          error instanceof Error ? error.message : "加载模型配置失败。"
+        );
       });
     });
-  }, []);
+  }, [refresh]);
 
   function applyProviderToForm(providerId: string) {
     const provider = providers.find((item) => item.id === providerId);
@@ -171,11 +189,12 @@ function ProvidersPage() {
       baseUrl: provider.baseUrl ?? "",
       model: provider.model,
       enabled: provider.enabled,
-      timeoutMs: String(provider.timeoutMs ?? 30000),
+      timeoutMs: String(provider.timeoutMs ?? 30_000),
       retryAttempts: String(provider.retry?.maxAttempts ?? 2),
       retryBackoffMs: String(provider.retry?.backoffMs ?? 1000),
       apiKey: "",
     });
+    setActiveTab("edit");
   }
 
   function applyPresetToForm() {
@@ -192,7 +211,7 @@ function ProvidersPage() {
   }
 
   async function onSave() {
-    if (!form.id || !form.displayName || !form.model) {
+    if (!(form.id && form.displayName && form.model)) {
       setMessage("请填写 ID、显示名称、模型。");
       return;
     }
@@ -201,6 +220,7 @@ function ProvidersPage() {
       const timeoutMs = Number(form.timeoutMs);
       const retryAttempts = Number(form.retryAttempts);
       const retryBackoffMs = Number(form.retryBackoffMs);
+
       await saveProviderConfig({
         id: form.id,
         kind: form.kind,
@@ -218,9 +238,11 @@ function ProvidersPage() {
             : undefined,
         apiKey: form.apiKey || undefined,
       });
+
       setMessage("模型配置已保存。");
       setForm((prev) => ({ ...prev, apiKey: "" }));
       await refresh();
+      setActiveTab("saved");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "保存失败。");
     }
@@ -249,223 +271,313 @@ function ProvidersPage() {
   }
 
   return (
-    <>
-      <NavigationMenu />
-      <div className="h-full overflow-auto p-3">
-        <div className="mx-auto flex max-w-6xl flex-col gap-4">
-          <section className="rounded-lg border border-border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h1 className="font-semibold text-lg">模型配置</h1>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setForm(DEFAULT_FORM);
-                    setMessage("表单已重置。");
-                  }}
-                >
-                  重置
-                </Button>
-              </div>
-            </div>
-            <div className="mb-4 rounded-md border border-border bg-muted/30 p-3">
-              <div className="flex flex-col gap-2 md:flex-row md:items-center">
-                <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-                  <span>常用预设</span>
-                  <select
-                    className="rounded-md border border-input bg-background px-2 py-1"
-                    value={presetKey}
-                    onChange={(event) => setPresetKey(event.target.value)}
-                  >
-                    {PROVIDER_PRESETS.map((preset) => (
-                      <option key={preset.key} value={preset.key}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <Button
-                  className="md:mt-5"
-                  variant="outline"
-                  onClick={applyPresetToForm}
-                >
-                  套用预设
-                </Button>
-              </div>
-              <p className="mt-2 text-muted-foreground text-xs">
-                {selectedPreset?.description ?? "选择后可一键填充。"}
-              </p>
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label className="flex flex-col gap-1 text-sm">
-                <span>模型 ID</span>
-                <input
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.id}
-                  onChange={(event) => setForm((prev) => ({ ...prev, id: event.target.value.trim() }))}
-                  placeholder="openai-main"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span>显示名称</span>
-                <input
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.displayName}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, displayName: event.target.value }))
-                  }
-                  placeholder="示例：OpenAI 主线路"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span>类型</span>
-                <select
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.kind}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, kind: event.target.value as ProviderKind }))
-                  }
-                >
-                  <option value="openai-compatible">OpenAI 兼容</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="google">Google</option>
-                  <option value="domestic-compatible">国内兼容网关</option>
-                  <option value="minimax">MiniMax</option>
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span>模型</span>
-                <input
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.model}
-                  onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
-                  placeholder="gpt-4o-mini"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm md:col-span-2">
-                <span>Base URL（可选）</span>
-                <input
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.baseUrl}
-                  onChange={(event) => setForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
-                  placeholder="https://api.openai.com/v1"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span>超时（ms）</span>
-                <input
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.timeoutMs}
-                  onChange={(event) => setForm((prev) => ({ ...prev, timeoutMs: event.target.value }))}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span>重试次数</span>
-                <input
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.retryAttempts}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, retryAttempts: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span>重试间隔（ms）</span>
-                <input
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.retryBackoffMs}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, retryBackoffMs: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  checked={form.enabled}
-                  onChange={(event) => setForm((prev) => ({ ...prev, enabled: event.target.checked }))}
-                  type="checkbox"
-                />
-                启用
-              </label>
-              <label className="flex flex-col gap-1 text-sm md:col-span-2">
-                <span>API Key（可选，保存时加密）</span>
-                <input
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  type="password"
-                  value={form.apiKey}
-                  onChange={(event) => setForm((prev) => ({ ...prev, apiKey: event.target.value }))}
-                  placeholder="sk-..."
-                />
-              </label>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <Button disabled={isPending} onClick={onSave}>
-                保存模型配置
-              </Button>
-              {selectedProvider ? (
-                <Button
-                  disabled={isPending}
-                  variant="outline"
-                  onClick={() => onTest(selectedProvider.id)}
-                >
-                  测试当前配置
-                </Button>
-              ) : null}
-            </div>
-            {message ? <p className="mt-3 text-muted-foreground text-sm">{message}</p> : null}
-          </section>
+    <div className="app-page">
+      <section className="app-panel min-h-0 xl:col-span-12">
+        <header className="app-panel-header">
+          <div>
+            <h1 className="font-semibold text-base">模型配置工作区</h1>
+            <p className="text-muted-foreground text-xs">
+              通过页签切换“配置编辑”和“已保存配置”。
+            </p>
+          </div>
+          <Button
+            onClick={() => {
+              setForm(DEFAULT_FORM);
+              setShowAdvanced(false);
+              setMessage("表单已重置。");
+            }}
+            variant="outline"
+          >
+            重置
+          </Button>
+        </header>
 
-          <section className="rounded-lg border border-border bg-card p-4">
-            <h2 className="mb-3 font-semibold text-base">已保存的模型配置</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[680px] text-sm">
-                <thead className="border-b border-border text-muted-foreground">
-                  <tr>
-                    <th className="px-2 py-2 text-left">ID</th>
-                    <th className="px-2 py-2 text-left">类型</th>
-                    <th className="px-2 py-2 text-left">模型</th>
-                    <th className="px-2 py-2 text-left">启用</th>
-                    <th className="px-2 py-2 text-left">更新时间</th>
-                    <th className="px-2 py-2 text-left">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {providers.map((provider) => (
-                    <tr key={provider.id} className="border-b border-border/60">
-                      <td className="px-2 py-2">{provider.id}</td>
-                      <td className="px-2 py-2">{provider.kind}</td>
-                      <td className="px-2 py-2">{provider.model}</td>
-                      <td className="px-2 py-2">{provider.enabled ? "是" : "否"}</td>
-                      <td className="px-2 py-2">{new Date(provider.updatedAt).toLocaleString()}</td>
-                      <td className="px-2 py-2">
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => applyProviderToForm(provider.id)}>
-                            编辑
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => onTest(provider.id)}>
-                            测试
-                          </Button>
-                          <Button size="sm" variant="destructive" onClick={() => onDelete(provider.id)}>
-                            删除
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {providers.length === 0 ? (
-                    <tr>
-                      <td className="px-2 py-6 text-center text-muted-foreground" colSpan={6}>
-                        暂无模型配置。
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+        <div className="app-panel-body !p-0">
+          <Tabs
+            className="flex h-full min-h-0 flex-col"
+            onValueChange={(value) => setActiveTab(value as ProvidersTab)}
+            value={activeTab}
+          >
+            <div className="border-border/70 border-b px-4 py-2">
+              <TabsList>
+                <TabsTrigger value="edit">配置编辑</TabsTrigger>
+                <TabsTrigger value="saved">已保存配置</TabsTrigger>
+              </TabsList>
             </div>
-          </section>
+
+            <TabsContent className="overflow-auto p-4" value="edit">
+              <div className="space-y-4">
+                <section className="rounded-xl border border-border/70 bg-muted/25 p-3">
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
+                    <label className="field-label min-w-0 flex-1">
+                      <span>常用预设</span>
+                      <select
+                        className="field-input"
+                        onChange={(event) => setPresetKey(event.target.value)}
+                        value={presetKey}
+                      >
+                        {PROVIDER_PRESETS.map((preset) => (
+                          <option key={preset.key} value={preset.key}>
+                            {preset.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Button onClick={applyPresetToForm} variant="outline">
+                      套用预设
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-muted-foreground text-xs">
+                    {selectedPreset?.description ?? "选择后可一键填充。"}
+                  </p>
+                </section>
+
+                <section className="field-grid">
+                  <label className="field-label">
+                    <span>模型 ID</span>
+                    <input
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          id: event.target.value.trim(),
+                        }))
+                      }
+                      placeholder="openai-main"
+                      value={form.id}
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>显示名称</span>
+                    <input
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          displayName: event.target.value,
+                        }))
+                      }
+                      placeholder="示例：OpenAI 主线路"
+                      value={form.displayName}
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>类型</span>
+                    <select
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          kind: event.target.value as ProviderKind,
+                        }))
+                      }
+                      value={form.kind}
+                    >
+                      <option value="openai-compatible">OpenAI 兼容</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="google">Google</option>
+                      <option value="domestic-compatible">国内兼容网关</option>
+                      <option value="minimax">MiniMax</option>
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    <span>模型</span>
+                    <input
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          model: event.target.value,
+                        }))
+                      }
+                      placeholder="gpt-4o-mini"
+                      value={form.model}
+                    />
+                  </label>
+                  <label className="field-label md:col-span-2">
+                    <span>Base URL（可选）</span>
+                    <input
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          baseUrl: event.target.value,
+                        }))
+                      }
+                      placeholder="https://api.openai.com/v1"
+                      value={form.baseUrl}
+                    />
+                  </label>
+                  <label className="field-label md:col-span-2">
+                    <span>API Key（可选，保存时加密）</span>
+                    <input
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          apiKey: event.target.value,
+                        }))
+                      }
+                      placeholder="sk-..."
+                      type="password"
+                      value={form.apiKey}
+                    />
+                  </label>
+                </section>
+
+                <section className="rounded-xl border border-border/70 bg-muted/20 p-3">
+                  <button
+                    className="cursor-pointer font-medium text-sm transition hover:text-foreground/85"
+                    onClick={() => setShowAdvanced((prev) => !prev)}
+                    type="button"
+                  >
+                    {showAdvanced ? "收起高级选项" : "展开高级选项"}
+                  </button>
+
+                  {showAdvanced ? (
+                    <div className="field-grid mt-3">
+                      <label className="field-label">
+                        <span>超时（ms）</span>
+                        <input
+                          className="field-input"
+                          onChange={(event) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              timeoutMs: event.target.value,
+                            }))
+                          }
+                          value={form.timeoutMs}
+                        />
+                      </label>
+                      <label className="field-label">
+                        <span>重试次数</span>
+                        <input
+                          className="field-input"
+                          onChange={(event) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              retryAttempts: event.target.value,
+                            }))
+                          }
+                          value={form.retryAttempts}
+                        />
+                      </label>
+                      <label className="field-label">
+                        <span>重试间隔（ms）</span>
+                        <input
+                          className="field-input"
+                          onChange={(event) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              retryBackoffMs: event.target.value,
+                            }))
+                          }
+                          value={form.retryBackoffMs}
+                        />
+                      </label>
+                      <div className="field-label justify-end">
+                        <span>状态</span>
+                        <label className="inline-flex items-center gap-2 rounded-md border border-border/70 bg-card px-3 py-2 text-sm">
+                          <input
+                            checked={form.enabled}
+                            onChange={(event) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                enabled: event.target.checked,
+                              }))
+                            }
+                            type="checkbox"
+                          />
+                          启用
+                        </label>
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button disabled={isPending} onClick={onSave}>
+                    保存模型配置
+                  </Button>
+                  {selectedProvider ? (
+                    <Button
+                      disabled={isPending}
+                      onClick={() => onTest(selectedProvider.id)}
+                      variant="outline"
+                    >
+                      测试当前配置
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent className="overflow-auto p-4" value="saved">
+              <div className="space-y-2">
+                {providers.map((provider) => (
+                  <article
+                    className="rounded-lg border border-border/70 bg-muted/20 p-3"
+                    key={provider.id}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-sm">
+                          {provider.displayName}
+                        </p>
+                        <p className="text-muted-foreground text-xs">
+                          {provider.id} · {provider.kind}
+                        </p>
+                        <p className="mt-1 text-xs">模型：{provider.model}</p>
+                        <p className="text-muted-foreground text-xs">
+                          更新：{new Date(provider.updatedAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-border/80 px-2 py-0.5 text-xs">
+                        {provider.enabled ? "已启用" : "已停用"}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        onClick={() => applyProviderToForm(provider.id)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        onClick={() => onTest(provider.id)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        测试
+                      </Button>
+                      <Button
+                        onClick={() => onDelete(provider.id)}
+                        size="sm"
+                        variant="destructive"
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  </article>
+                ))}
+                {providers.length === 0 ? (
+                  <div className="rounded-lg border border-border/70 border-dashed px-4 py-10 text-center text-muted-foreground text-sm">
+                    暂无模型配置。
+                  </div>
+                ) : null}
+              </div>
+            </TabsContent>
+          </Tabs>
         </div>
-      </div>
-    </>
+
+        {message ? (
+          <div className="border-border/70 border-t px-4 py-2 text-muted-foreground text-sm">
+            {message}
+          </div>
+        ) : null}
+      </section>
+    </div>
   );
 }
 

@@ -8,9 +8,9 @@ export default function BaseLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="relative min-h-[100dvh] overflow-hidden bg-background">
+    <div className="relative h-[100dvh] overflow-hidden bg-background">
       <div className="app-backdrop pointer-events-none absolute inset-0" />
-      <div className="relative flex min-h-[100dvh] flex-col">
+      <div className="relative flex h-full min-h-0 flex-col">
         <div className="border-border/70 border-b bg-background/85 backdrop-blur-xl">
           <DragWindowRegion
             title={
@@ -28,13 +28,13 @@ export default function BaseLayout({
             }
           />
         </div>
-        <main className="flex min-h-0 flex-1 p-3">
-          <div className="grid h-full min-h-0 w-full grid-cols-1 gap-3 xl:grid-cols-[250px_minmax(0,1fr)]">
+        <main className="flex min-h-0 flex-1 overflow-hidden p-3">
+          <div className="grid h-full min-h-0 w-full grid-cols-1 gap-3 overflow-hidden md:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[250px_minmax(0,1fr)]">
             <aside className="min-h-0 overflow-hidden rounded-2xl border border-border/70 bg-card/88 shadow-[0_30px_45px_-34px_rgba(5,17,38,0.55)] backdrop-blur">
               <NavigationMenu />
             </aside>
-            <section className="min-h-0 overflow-hidden rounded-2xl border border-border/70 bg-card/92 shadow-[0_35px_55px_-36px_rgba(5,17,38,0.6)] backdrop-blur-sm">
-              {children}
+            <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card/92 shadow-[0_35px_55px_-36px_rgba(5,17,38,0.6)] backdrop-blur-sm">
+              <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
             </section>
           </div>
         </main>

@@ -1,5 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from "react";
 import {
   cancelAgentJob,
   createAgentJob,
@@ -10,16 +16,18 @@ import {
 } from "@/actions/agent";
 import { listProviders } from "@/actions/provider";
 import { listVoiceProfiles } from "@/actions/voice-clone";
-import NavigationMenu from "@/components/navigation-menu";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface JobFormState {
-  providerId: string;
-  model: string;
-  voiceId: string;
-  localFilesText: string;
   articleUrlsText: string;
+  localFilesText: string;
+  model: string;
+  providerId: string;
+  voiceId: string;
 }
+
+type JobsTab = "create" | "queue" | "detail" | "events";
 
 function JobsPage() {
   const [providers, setProviders] = useState<
@@ -28,9 +36,14 @@ function JobsPage() {
   const [voices, setVoices] = useState<
     Awaited<ReturnType<typeof listVoiceProfiles>>
   >([]);
-  const [jobs, setJobs] = useState<Awaited<ReturnType<typeof listAgentJobs>>>([]);
+  const [jobs, setJobs] = useState<Awaited<ReturnType<typeof listAgentJobs>>>(
+    []
+  );
   const [selectedJobId, setSelectedJobId] = useState("");
-  const [events, setEvents] = useState<Awaited<ReturnType<typeof getAgentJobEvents>>>([]);
+  const [events, setEvents] = useState<
+    Awaited<ReturnType<typeof getAgentJobEvents>>
+  >([]);
+  const [activeTab, setActiveTab] = useState<JobsTab>("create");
   const [queueSummary, setQueueSummary] = useState<
     Awaited<ReturnType<typeof getAgentQueueSummary>> | undefined
   >(undefined);
@@ -49,6 +62,11 @@ function JobsPage() {
     [providers]
   );
 
+  const selectedJob = useMemo(
+    () => jobs.find((job) => job.jobId === selectedJobId),
+    [jobs, selectedJobId]
+  );
+
   useEffect(() => {
     const selectedProvider = enabledProviders.find(
       (provider) => provider.id === form.providerId
@@ -64,23 +82,24 @@ function JobsPage() {
     );
   }, [enabledProviders, form.providerId]);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const [providerRows, voiceRows, jobRows, summary] = await Promise.all([
       listProviders(),
       listVoiceProfiles(),
       listAgentJobs(),
       getAgentQueueSummary(),
     ]);
+
     setProviders(providerRows);
     setVoices(voiceRows);
     setJobs(jobRows);
     setQueueSummary(summary);
 
-    if (selectedJobId) {
+    if (selectedJobId && activeTab === "events") {
       const jobEvents = await getAgentJobEvents(selectedJobId);
       setEvents(jobEvents);
     }
-  }
+  }, [activeTab, selectedJobId]);
 
   useEffect(() => {
     startTransition(() => {
@@ -90,13 +109,15 @@ function JobsPage() {
     });
 
     const timer = window.setInterval(() => {
-      refresh().catch(() => {});
+      refresh().catch(() => {
+        // Polling errors are surfaced on next successful refresh.
+      });
     }, 2000);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [selectedJobId]);
+  }, [refresh]);
 
   async function onCreateJob() {
     try {
@@ -104,12 +125,13 @@ function JobsPage() {
         .split("\n")
         .map((item) => item.trim())
         .filter(Boolean);
+
       const articleUrls = form.articleUrlsText
         .split("\n")
         .map((item) => item.trim())
         .filter(Boolean);
 
-      if (!form.providerId || !form.model) {
+      if (!(form.providerId && form.model)) {
         setMessage("请填写 providerId 和 model。");
         return;
       }
@@ -121,11 +143,30 @@ function JobsPage() {
         localFiles,
         articleUrls,
       });
+
       setSelectedJobId(created.jobId);
+      setActiveTab("detail");
       setMessage(`任务已创建：${created.jobId}`);
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "创建任务失败。");
+    }
+  }
+
+  async function onSelectJob(
+    jobId: string,
+    tab: Extract<JobsTab, "detail" | "events">
+  ) {
+    setSelectedJobId(jobId);
+    setActiveTab(tab);
+
+    if (tab === "events") {
+      try {
+        const rows = await getAgentJobEvents(jobId);
+        setEvents(rows);
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "加载事件失败。");
+      }
     }
   }
 
@@ -150,166 +191,283 @@ function JobsPage() {
   }
 
   return (
-    <>
-      <NavigationMenu />
-      <div className="h-full overflow-auto p-3">
-        <div className="mx-auto flex max-w-6xl flex-col gap-4">
-          <section className="rounded-lg border border-border bg-card p-4">
-            <h1 className="mb-3 font-semibold text-lg">Agent 任务</h1>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <label className="flex flex-col gap-1 text-sm">
-                <span>模型服务</span>
-                <select
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.providerId}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, providerId: event.target.value }))
-                  }
-                >
-                  {enabledProviders.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.displayName} ({provider.id})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span>模型</span>
-                <input
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.model}
-                  onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm md:col-span-2">
-                <span>音色 ID（可选）</span>
-                <select
-                  className="rounded-md border border-input bg-background px-2 py-1"
-                  value={form.voiceId}
-                  onChange={(event) => setForm((prev) => ({ ...prev, voiceId: event.target.value }))}
-                >
-                  <option value="">（不使用）</option>
-                  {voices.map((voice) => (
-                    <option key={voice.voiceId} value={voice.voiceId}>
-                      {voice.voiceId}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span>本地文件（每行一个）</span>
-                <textarea
-                  className="min-h-24 rounded-md border border-input bg-background px-2 py-1"
-                  value={form.localFilesText}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, localFilesText: event.target.value }))
-                  }
-                  placeholder={"D:\\docs\\input1.md\nD:\\docs\\input2.pdf"}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span>文章 URL（每行一个）</span>
-                <textarea
-                  className="min-h-24 rounded-md border border-input bg-background px-2 py-1"
-                  value={form.articleUrlsText}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, articleUrlsText: event.target.value }))
-                  }
-                  placeholder={"https://example.com/a\nhttps://example.com/b"}
-                />
-              </label>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <Button disabled={isPending} onClick={onCreateJob}>
-                创建任务
-              </Button>
-            </div>
-            {queueSummary ? (
-              <p className="mt-3 text-muted-foreground text-sm">
-                排队: {queueSummary.counts.queued} | 运行中: {queueSummary.counts.running} |
-                已完成: {queueSummary.counts.completed} | 失败: {queueSummary.counts.failed}
-              </p>
-            ) : null}
-            {message ? <p className="mt-2 text-muted-foreground text-sm">{message}</p> : null}
-          </section>
+    <div className="app-page">
+      <section className="app-panel min-h-0 xl:col-span-12">
+        <header className="app-panel-header">
+          <div>
+            <h1 className="font-semibold text-base">任务队列工作区</h1>
+            <p className="text-muted-foreground text-xs">
+              用上方页签切换任务创建、队列、详情与事件日志。
+            </p>
+          </div>
+          {queueSummary ? (
+            <p className="text-muted-foreground text-xs">
+              排队 {queueSummary.counts.queued} · 运行中{" "}
+              {queueSummary.counts.running} · 完成{" "}
+              {queueSummary.counts.completed} · 失败{" "}
+              {queueSummary.counts.failed}
+            </p>
+          ) : null}
+        </header>
 
-          <section className="rounded-lg border border-border bg-card p-4">
-            <h2 className="mb-3 font-semibold text-base">任务列表</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-sm">
-                <thead className="border-b border-border text-muted-foreground">
-                  <tr>
-                    <th className="px-2 py-2 text-left">任务 ID</th>
-                    <th className="px-2 py-2 text-left">状态</th>
-                    <th className="px-2 py-2 text-left">阶段</th>
-                    <th className="px-2 py-2 text-left">进度</th>
-                    <th className="px-2 py-2 text-left">队列位置</th>
-                    <th className="px-2 py-2 text-left">更新时间</th>
-                    <th className="px-2 py-2 text-left">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.map((job) => (
-                    <tr key={job.jobId} className="border-b border-border/60">
-                      <td className="px-2 py-2">
-                        <button
-                          className="text-left text-primary underline"
-                          onClick={async () => {
-                            setSelectedJobId(job.jobId);
-                            const rows = await getAgentJobEvents(job.jobId);
-                            setEvents(rows);
-                          }}
-                          type="button"
-                        >
-                          {job.jobId.slice(0, 8)}...
-                        </button>
-                      </td>
-                      <td className="px-2 py-2">{job.state}</td>
-                      <td className="px-2 py-2">{job.stage}</td>
-                      <td className="px-2 py-2">{job.progress}%</td>
-                      <td className="px-2 py-2">{job.queuePosition}</td>
-                      <td className="px-2 py-2">{new Date(job.updatedAt).toLocaleString()}</td>
-                      <td className="px-2 py-2">
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onCancel(job.jobId)}
-                          >
-                            取消
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onRetry(job.jobId)}
-                          >
-                            重试
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {jobs.length === 0 ? (
-                    <tr>
-                      <td className="px-2 py-6 text-center text-muted-foreground" colSpan={7}>
-                        暂无任务。
-                      </td>
-                    </tr>
+        <div className="app-panel-body !p-0">
+          <Tabs
+            className="flex h-full min-h-0 flex-col"
+            onValueChange={(value) => setActiveTab(value as JobsTab)}
+            value={activeTab}
+          >
+            <div className="border-border/70 border-b px-4 py-2">
+              <TabsList>
+                <TabsTrigger value="create">创建任务</TabsTrigger>
+                <TabsTrigger value="queue">任务队列</TabsTrigger>
+                <TabsTrigger value="detail">任务详情</TabsTrigger>
+                <TabsTrigger value="events">事件日志</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent className="overflow-auto p-4" value="create">
+              <div className="space-y-3">
+                <div className="field-grid">
+                  <label className="field-label">
+                    <span>模型服务</span>
+                    <select
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          providerId: event.target.value,
+                        }))
+                      }
+                      value={form.providerId}
+                    >
+                      {enabledProviders.map((provider) => (
+                        <option key={provider.id} value={provider.id}>
+                          {provider.displayName} ({provider.id})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    <span>模型</span>
+                    <input
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          model: event.target.value,
+                        }))
+                      }
+                      value={form.model}
+                    />
+                  </label>
+                  <label className="field-label md:col-span-2">
+                    <span>音色 ID（可选）</span>
+                    <select
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          voiceId: event.target.value,
+                        }))
+                      }
+                      value={form.voiceId}
+                    >
+                      <option value="">（不使用）</option>
+                      {voices.map((voice) => (
+                        <option key={voice.voiceId} value={voice.voiceId}>
+                          {voice.voiceId}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    <span>本地文件（每行一个）</span>
+                    <textarea
+                      className="field-input min-h-24"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          localFilesText: event.target.value,
+                        }))
+                      }
+                      placeholder={"D:\\docs\\input1.md\nD:\\docs\\input2.pdf"}
+                      value={form.localFilesText}
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>文章 URL（每行一个）</span>
+                    <textarea
+                      className="field-input min-h-24"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          articleUrlsText: event.target.value,
+                        }))
+                      }
+                      placeholder={
+                        "https://example.com/a\nhttps://example.com/b"
+                      }
+                      value={form.articleUrlsText}
+                    />
+                  </label>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button disabled={isPending} onClick={onCreateJob}>
+                    创建任务
+                  </Button>
+                  {message ? (
+                    <p className="text-muted-foreground text-sm">{message}</p>
                   ) : null}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                </div>
+              </div>
+            </TabsContent>
 
-          <section className="rounded-lg border border-border bg-card p-4">
-            <h2 className="mb-3 font-semibold text-base">
-              事件日志 {selectedJobId ? `(${selectedJobId.slice(0, 8)}...)` : ""}
-            </h2>
-            <div className="max-h-64 overflow-auto rounded-md border border-border p-2">
+            <TabsContent className="overflow-auto p-4" value="queue">
+              <div className="space-y-2">
+                {jobs.map((job) => (
+                  <article
+                    className={`rounded-lg border p-3 ${
+                      selectedJobId === job.jobId
+                        ? "border-primary/50 bg-primary/10"
+                        : "border-border/70 bg-muted/20"
+                    }`}
+                    key={job.jobId}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium text-sm">
+                          {job.jobId.slice(0, 12)}...
+                        </p>
+                        <p className="mt-1 text-muted-foreground text-xs">
+                          状态：{job.state} · 阶段：{job.stage} · 队列位：
+                          {job.queuePosition}
+                        </p>
+                        <p className="text-muted-foreground text-xs">
+                          更新：{new Date(job.updatedAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="min-w-28 text-right">
+                        <p className="font-mono text-sm">{job.progress}%</p>
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full bg-primary transition-all"
+                            style={{
+                              width: `${Math.min(100, Math.max(0, job.progress))}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        onClick={() => onSelectJob(job.jobId, "detail")}
+                        size="sm"
+                        variant="outline"
+                      >
+                        查看详情
+                      </Button>
+                      <Button
+                        onClick={() => onSelectJob(job.jobId, "events")}
+                        size="sm"
+                        variant="outline"
+                      >
+                        查看事件
+                      </Button>
+                      <Button
+                        onClick={() => onCancel(job.jobId)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        取消
+                      </Button>
+                      <Button
+                        onClick={() => onRetry(job.jobId)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        重试
+                      </Button>
+                    </div>
+                  </article>
+                ))}
+
+                {jobs.length === 0 ? (
+                  <div className="rounded-lg border border-border/70 border-dashed px-4 py-10 text-center text-muted-foreground text-sm">
+                    暂无任务。
+                  </div>
+                ) : null}
+              </div>
+            </TabsContent>
+
+            <TabsContent className="overflow-auto p-4" value="detail">
+              {selectedJob ? (
+                <div className="space-y-3">
+                  <div className="rounded-md border border-border/70 bg-muted/20 p-3">
+                    <div className="mb-2 flex items-center justify-between text-sm">
+                      <span className="font-medium">进度</span>
+                      <span>{selectedJob.progress}%</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full bg-primary transition-all"
+                        style={{
+                          width: `${Math.min(100, Math.max(0, selectedJob.progress))}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    <div className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm">
+                      <p className="text-muted-foreground">任务 ID</p>
+                      <p className="break-all font-medium">
+                        {selectedJob.jobId}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm">
+                      <p className="text-muted-foreground">当前状态</p>
+                      <p className="font-medium">{selectedJob.state}</p>
+                    </div>
+                    <div className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm">
+                      <p className="text-muted-foreground">当前阶段</p>
+                      <p className="font-medium">{selectedJob.stage}</p>
+                    </div>
+                    <div className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm">
+                      <p className="text-muted-foreground">当前工具</p>
+                      <p className="font-medium">
+                        {selectedJob.currentTool ?? "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm">
+                      <p className="text-muted-foreground">创建时间</p>
+                      <p className="font-medium">
+                        {new Date(selectedJob.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm">
+                      <p className="text-muted-foreground">更新时间</p>
+                      <p className="font-medium">
+                        {new Date(selectedJob.updatedAt).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-border/70 border-dashed px-4 py-10 text-center text-muted-foreground text-sm">
+                  请先在“任务队列”页签中选择任务。
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent className="overflow-auto p-4" value="events">
               {events.length > 0 ? (
                 <ul className="space-y-1 text-sm">
                   {events.map((event) => (
-                    <li key={event.id} className="rounded bg-muted/50 px-2 py-1">
+                    <li
+                      className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5"
+                      key={event.id}
+                    >
                       <span className="mr-2 text-muted-foreground">
                         {new Date(event.createdAt).toLocaleTimeString()}
                       </span>
@@ -319,13 +477,17 @@ function JobsPage() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-muted-foreground text-sm">未选择任务或暂无事件。</p>
+                <div className="rounded-lg border border-border/70 border-dashed px-4 py-10 text-center text-muted-foreground text-sm">
+                  {selectedJobId
+                    ? "当前任务暂无事件。"
+                    : "请先选择任务后再查看事件。"}
+                </div>
               )}
-            </div>
-          </section>
+            </TabsContent>
+          </Tabs>
         </div>
-      </div>
-    </>
+      </section>
+    </div>
   );
 }
 
