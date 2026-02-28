@@ -42,6 +42,14 @@ export class MiniMaxClient {
     private readonly apiKey: string
   ) {}
 
+  private buildV1Endpoint(pathWithoutLeadingSlash: string) {
+    const normalizedBase = this.baseUrl.replace(/\/+$/, "");
+    if (normalizedBase.endsWith("/v1")) {
+      return `${normalizedBase}/${pathWithoutLeadingSlash}`;
+    }
+    return `${normalizedBase}/v1/${pathWithoutLeadingSlash}`;
+  }
+
   private async parseJsonResponse(response: Response) {
     const text = await response.text();
     try {
@@ -69,7 +77,7 @@ export class MiniMaxClient {
     formData.append("purpose", purpose);
     formData.append("file", blob, path.basename(filePath));
 
-    const response = await fetch(`${this.baseUrl}/v1/files/upload`, {
+    const response = await fetch(this.buildV1Endpoint("files/upload"), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
@@ -90,7 +98,7 @@ export class MiniMaxClient {
   }
 
   async cloneVoice(payload: MiniMaxClonePayload) {
-    const response = await fetch(`${this.baseUrl}/v1/voice_clone`, {
+    const response = await fetch(this.buildV1Endpoint("voice_clone"), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,

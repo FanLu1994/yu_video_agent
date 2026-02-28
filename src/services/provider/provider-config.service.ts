@@ -1,8 +1,10 @@
+import { completeSimple } from "@mariozechner/pi-ai";
 import type {
   ProviderConfig,
   SaveProviderConfigInput,
 } from "@/domain/provider/types";
 import { JsonFileStore } from "@/services/storage/json-file-store";
+import { buildPiModel } from "./pi-model";
 import { SecretVault } from "../security/secret-vault";
 
 interface ProvidersDb {
@@ -15,7 +17,7 @@ const DEFAULT_MINIMAX_PROVIDER: ProviderConfig = {
   id: "minimax",
   kind: "minimax",
   displayName: "MiniMax",
-  baseUrl: "https://api.minimaxi.com",
+  baseUrl: "https://api.minimaxi.com/v1",
   model: "speech-2.8-hd",
   enabled: true,
   timeoutMs: 30_000,
@@ -113,9 +115,53 @@ export class ProviderConfigService {
       };
     }
 
-    return {
-      ok: true,
-      message: `Provider '${providerId}' configuration is valid.`,
-    };
+    if (provider.kind === "minimax" && provider.model.startsWith("speech-")) {
+      return {
+        ok: true,
+        message:
+          `Provider '${providerId}' is configured for speech model '${provider.model}'. ` +
+          "LLM probe is skipped; this provider can still be used for voice cloning.",
+      };
+    }
+
+    try {
+      const model = buildPiModel(provider);
+      const response = await completeSimple(
+        model,
+        {
+          messages: [
+            {
+              role: "user",
+              content:
+                "Health check. Reply with exactly one word: ready.",
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        {
+          apiKey,
+          maxTokens: 16,
+          reasoning: "minimal",
+        }
+      );
+
+      const firstText = response.content.find((item) => item.type === "text");
+      const preview = firstText?.type === "text" ? firstText.text.slice(0, 80) : "";
+
+      return {
+        ok: response.stopReason !== "error" && response.stopReason !== "aborted",
+        message: preview
+          ? `Provider '${providerId}' reachable. Response: ${preview}`
+          : `Provider '${providerId}' reachable.`,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? `Provider '${providerId}' test failed: ${error.message}`
+            : `Provider '${providerId}' test failed.`,
+      };
+    }
   }
 }

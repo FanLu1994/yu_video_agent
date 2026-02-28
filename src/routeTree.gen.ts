@@ -9,12 +9,24 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SecondRouteImport } from './routes/second'
+import { Route as VoicesRouteImport } from './routes/voices'
+import { Route as ProvidersRouteImport } from './routes/providers'
+import { Route as JobsRouteImport } from './routes/jobs'
 import { Route as IndexRouteImport } from './routes/index'
 
-const SecondRoute = SecondRouteImport.update({
-  id: '/second',
-  path: '/second',
+const VoicesRoute = VoicesRouteImport.update({
+  id: '/voices',
+  path: '/voices',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProvidersRoute = ProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobsRoute = JobsRouteImport.update({
+  id: '/jobs',
+  path: '/jobs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -25,37 +37,59 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/second': typeof SecondRoute
+  '/jobs': typeof JobsRoute
+  '/providers': typeof ProvidersRoute
+  '/voices': typeof VoicesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/second': typeof SecondRoute
+  '/jobs': typeof JobsRoute
+  '/providers': typeof ProvidersRoute
+  '/voices': typeof VoicesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/second': typeof SecondRoute
+  '/jobs': typeof JobsRoute
+  '/providers': typeof ProvidersRoute
+  '/voices': typeof VoicesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/second'
+  fullPaths: '/' | '/jobs' | '/providers' | '/voices'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/second'
-  id: '__root__' | '/' | '/second'
+  to: '/' | '/jobs' | '/providers' | '/voices'
+  id: '__root__' | '/' | '/jobs' | '/providers' | '/voices'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  SecondRoute: typeof SecondRoute
+  JobsRoute: typeof JobsRoute
+  ProvidersRoute: typeof ProvidersRoute
+  VoicesRoute: typeof VoicesRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/second': {
-      id: '/second'
-      path: '/second'
-      fullPath: '/second'
-      preLoaderRoute: typeof SecondRouteImport
+    '/voices': {
+      id: '/voices'
+      path: '/voices'
+      fullPath: '/voices'
+      preLoaderRoute: typeof VoicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/providers': {
+      id: '/providers'
+      path: '/providers'
+      fullPath: '/providers'
+      preLoaderRoute: typeof ProvidersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/jobs': {
+      id: '/jobs'
+      path: '/jobs'
+      fullPath: '/jobs'
+      preLoaderRoute: typeof JobsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -70,7 +104,9 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  SecondRoute: SecondRoute,
+  JobsRoute: JobsRoute,
+  ProvidersRoute: ProvidersRoute,
+  VoicesRoute: VoicesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

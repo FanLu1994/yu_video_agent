@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import { useTranslation } from "react-i18next";
 import {
   NavigationMenu as NavigationMenuBase,
   NavigationMenuItem,
@@ -7,29 +6,29 @@ import {
   NavigationMenuList,
   navigationMenuTriggerStyle,
 } from "@/components/ui/navigation-menu";
-import ExternalLink from "./external-link";
 
 export default function NavigationMenu() {
-  const { t } = useTranslation();
-
   return (
     <NavigationMenuBase className="px-2 text-muted-foreground">
       <NavigationMenuList>
         <NavigationMenuItem>
           <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
-            <Link to="/">{t("titleHomePage")}</Link>
+            <Link to="/">首页</Link>
           </NavigationMenuLink>
         </NavigationMenuItem>
         <NavigationMenuItem>
           <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
-            <Link to="/second">{t("titleSecondPage")}</Link>
+            <Link to="/providers">模型配置</Link>
           </NavigationMenuLink>
         </NavigationMenuItem>
         <NavigationMenuItem>
           <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
-            <ExternalLink href="https://docs.luanroger.dev/electron-shadcn">
-              {t("documentation")}
-            </ExternalLink>
+            <Link to="/voices">音色克隆</Link>
+          </NavigationMenuLink>
+        </NavigationMenuItem>
+        <NavigationMenuItem>
+          <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
+            <Link to="/jobs">任务队列</Link>
           </NavigationMenuLink>
         </NavigationMenuItem>
       </NavigationMenuList>

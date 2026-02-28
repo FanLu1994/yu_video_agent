@@ -102,3 +102,7 @@ out/
 
 # Tanstack
 .tanstack/
+
+# Local package stores
+.pnpm-store/
+.pnpm-store-temp/
