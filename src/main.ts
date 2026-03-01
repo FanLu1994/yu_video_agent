@@ -177,8 +177,8 @@ function registerGlobalContextMenu(window: BrowserWindow) {
 function createWindow() {
   const preload = path.join(__dirname, "preload.js");
   const mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 1280,
+    height: 800,
     webPreferences: {
       devTools: inDevelopment,
       contextIsolation: true,

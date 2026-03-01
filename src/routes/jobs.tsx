@@ -36,9 +36,15 @@ interface JobFormState {
   model: string;
   providerId: string;
   voiceId: string;
+  voiceModel: string;
+  voiceProviderId: string;
 }
 
 type JobsTab = "create" | "queue" | "detail" | "events";
+
+function isSpeechModel(model: string) {
+  return model.trim().startsWith("speech-");
+}
 
 function JobsPage() {
   const location = useLocation();
@@ -60,8 +66,10 @@ function JobsPage() {
     Awaited<ReturnType<typeof getAgentQueueSummary>> | undefined
   >(undefined);
   const [form, setForm] = useState<JobFormState>({
-    providerId: "minimax",
-    model: "gpt-4o-mini",
+    providerId: "",
+    model: "",
+    voiceProviderId: "",
+    voiceModel: "",
     voiceId: "",
     localFilesText: "",
     articleUrlsText: "",
@@ -83,6 +91,20 @@ function JobsPage() {
     () => providers.filter((provider) => provider.enabled),
     [providers]
   );
+  const agentProviders = useMemo(
+    () => enabledProviders.filter((provider) => !isSpeechModel(provider.model)),
+    [enabledProviders]
+  );
+  const voiceProviders = useMemo(
+    () => enabledProviders.filter((provider) => isSpeechModel(provider.model)),
+    [enabledProviders]
+  );
+  const agentProviderOptions = agentProviders.length
+    ? agentProviders
+    : enabledProviders;
+  const voiceProviderOptions = voiceProviders.length
+    ? voiceProviders
+    : enabledProviders;
 
   const selectedJob = useMemo(
     () => jobs.find((job) => job.jobId === selectedJobId),
@@ -103,6 +125,65 @@ function JobsPage() {
         : { ...prev, model: selectedProvider.model }
     );
   }, [enabledProviders, form.providerId]);
+
+  useEffect(() => {
+    const selectedVoiceProvider = enabledProviders.find(
+      (provider) => provider.id === form.voiceProviderId
+    );
+    if (!selectedVoiceProvider) {
+      return;
+    }
+
+    setForm((prev) =>
+      prev.voiceModel === selectedVoiceProvider.model
+        ? prev
+        : { ...prev, voiceModel: selectedVoiceProvider.model }
+    );
+  }, [enabledProviders, form.voiceProviderId]);
+
+  useEffect(() => {
+    const fallbackAgentProvider = agentProviderOptions[0];
+    const fallbackVoiceProvider = voiceProviderOptions[0];
+
+    setForm((prev) => {
+      let changed = false;
+      let next = prev;
+
+      if (
+        !(
+          prev.providerId &&
+          enabledProviders.some((provider) => provider.id === prev.providerId)
+        ) &&
+        fallbackAgentProvider
+      ) {
+        next = {
+          ...next,
+          providerId: fallbackAgentProvider.id,
+          model: fallbackAgentProvider.model,
+        };
+        changed = true;
+      }
+
+      if (
+        !(
+          prev.voiceProviderId &&
+          enabledProviders.some(
+            (provider) => provider.id === prev.voiceProviderId
+          )
+        ) &&
+        fallbackVoiceProvider
+      ) {
+        next = {
+          ...next,
+          voiceProviderId: fallbackVoiceProvider.id,
+          voiceModel: fallbackVoiceProvider.model,
+        };
+        changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [agentProviderOptions, enabledProviders, voiceProviderOptions]);
 
   const refresh = useCallback(async () => {
     const [providerRows, voiceRows, jobRows, summary] = await Promise.all([
@@ -163,13 +244,20 @@ function JobsPage() {
         .filter(Boolean);
 
       if (!(form.providerId && form.model)) {
-        setMessage("请填写 providerId 和 model。");
+        setMessage("请填写 Agent 模型服务和 Agent 模型。");
+        return;
+      }
+
+      if (form.voiceId && !(form.voiceProviderId && form.voiceModel)) {
+        setMessage("选择音色时，请填写语音模型服务和语音模型。");
         return;
       }
 
       const created = await createAgentJob({
         providerId: form.providerId,
         model: form.model,
+        voiceProviderId: form.voiceProviderId || undefined,
+        voiceModel: form.voiceModel || undefined,
         voiceId: form.voiceId || undefined,
         localFiles,
         articleUrls,
@@ -310,7 +398,7 @@ function JobsPage() {
               <div className="space-y-3">
                 <div className="field-grid">
                   <label className="field-label">
-                    <span>模型服务</span>
+                    <span>Agent 模型服务</span>
                     <select
                       className="field-input"
                       onChange={(event) =>
@@ -321,15 +409,19 @@ function JobsPage() {
                       }
                       value={form.providerId}
                     >
-                      {enabledProviders.map((provider) => (
-                        <option key={provider.id} value={provider.id}>
-                          {provider.displayName} ({provider.id})
-                        </option>
-                      ))}
+                      {agentProviderOptions.length > 0 ? (
+                        agentProviderOptions.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.displayName} ({provider.id})
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">暂无可用服务</option>
+                      )}
                     </select>
                   </label>
                   <label className="field-label">
-                    <span>模型</span>
+                    <span>Agent 模型</span>
                     <input
                       className="field-input"
                       onChange={(event) =>
@@ -360,6 +452,42 @@ function JobsPage() {
                         </option>
                       ))}
                     </select>
+                  </label>
+                  <label className="field-label">
+                    <span>语音模型服务（可选）</span>
+                    <select
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          voiceProviderId: event.target.value,
+                        }))
+                      }
+                      value={form.voiceProviderId}
+                    >
+                      {voiceProviderOptions.length > 0 ? (
+                        voiceProviderOptions.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.displayName} ({provider.id})
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">暂无可用服务</option>
+                      )}
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    <span>语音模型（可选）</span>
+                    <input
+                      className="field-input"
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          voiceModel: event.target.value,
+                        }))
+                      }
+                      value={form.voiceModel}
+                    />
                   </label>
                   <label className="field-label">
                     <div className="flex items-center justify-between gap-2">

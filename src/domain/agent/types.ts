@@ -40,6 +40,8 @@ export interface RunAgentJobRequest {
   providerId: string;
   videoSpec?: VideoSpec;
   voiceId?: string;
+  voiceModel?: string;
+  voiceProviderId?: string;
 }
 
 export interface JobRecord {

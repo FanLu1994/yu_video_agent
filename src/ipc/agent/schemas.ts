@@ -12,6 +12,8 @@ export const createJobInputSchema = z.object({
   articleUrls: z.array(z.string().url()),
   providerId: z.string().min(1),
   model: z.string().min(1),
+  voiceProviderId: z.string().min(1).optional(),
+  voiceModel: z.string().min(1).optional(),
   voiceId: z.string().min(1).optional(),
   videoSpec: videoSpecSchema.optional(),
 });
