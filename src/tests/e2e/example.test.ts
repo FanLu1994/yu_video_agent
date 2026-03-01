@@ -39,6 +39,10 @@ test("renders the first page", async () => {
   const page: Page = await electronApp.firstWindow();
 
   const title = await page.waitForSelector("h1");
-  const text = await title.textContent();
-  expect(text).toBe("electron-shadcn");
+  const text = (await title.textContent())?.trim();
+  expect(text).toBe("视频 Agent 控制台");
+});
+
+test.afterAll(async () => {
+  await electronApp?.close();
 });
