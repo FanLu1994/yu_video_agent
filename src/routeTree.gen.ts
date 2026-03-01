@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as VoicesRouteImport } from './routes/voices'
 import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as JobsRouteImport } from './routes/jobs'
+import { Route as AgentConfigRouteImport } from './routes/agent-config'
 import { Route as IndexRouteImport } from './routes/index'
 
 const VoicesRoute = VoicesRouteImport.update({
@@ -29,6 +30,11 @@ const JobsRoute = JobsRouteImport.update({
   path: '/jobs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentConfigRoute = AgentConfigRouteImport.update({
+  id: '/agent-config',
+  path: '/agent-config',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -37,12 +43,14 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/agent-config': typeof AgentConfigRoute
   '/jobs': typeof JobsRoute
   '/providers': typeof ProvidersRoute
   '/voices': typeof VoicesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agent-config': typeof AgentConfigRoute
   '/jobs': typeof JobsRoute
   '/providers': typeof ProvidersRoute
   '/voices': typeof VoicesRoute
@@ -50,20 +58,22 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/agent-config': typeof AgentConfigRoute
   '/jobs': typeof JobsRoute
   '/providers': typeof ProvidersRoute
   '/voices': typeof VoicesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/jobs' | '/providers' | '/voices'
+  fullPaths: '/' | '/agent-config' | '/jobs' | '/providers' | '/voices'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/jobs' | '/providers' | '/voices'
-  id: '__root__' | '/' | '/jobs' | '/providers' | '/voices'
+  to: '/' | '/agent-config' | '/jobs' | '/providers' | '/voices'
+  id: '__root__' | '/' | '/agent-config' | '/jobs' | '/providers' | '/voices'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AgentConfigRoute: typeof AgentConfigRoute
   JobsRoute: typeof JobsRoute
   ProvidersRoute: typeof ProvidersRoute
   VoicesRoute: typeof VoicesRoute
@@ -92,6 +102,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof JobsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-config': {
+      id: '/agent-config'
+      path: '/agent-config'
+      fullPath: '/agent-config'
+      preLoaderRoute: typeof AgentConfigRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -104,6 +121,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AgentConfigRoute: AgentConfigRoute,
   JobsRoute: JobsRoute,
   ProvidersRoute: ProvidersRoute,
   VoicesRoute: VoicesRoute,

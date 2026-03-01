@@ -11,7 +11,13 @@ export default defineConfig({
   build: {
     rollupOptions: {
       // Keep ws optional native deps as runtime requires so ws can fall back to JS implementation.
-      external: ["bufferutil", "utf-8-validate"],
+      external: [
+        "bufferutil",
+        "utf-8-validate",
+        "@remotion/bundler",
+        "@remotion/renderer",
+        "remotion",
+      ],
     },
   },
 });

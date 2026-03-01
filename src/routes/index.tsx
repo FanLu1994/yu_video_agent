@@ -3,10 +3,12 @@ import {
   AudioLines,
   Bot,
   CirclePlus,
+  Film,
   FolderOpen,
   HelpCircle,
   Layers3,
   Play,
+  Sliders,
   SlidersHorizontal,
 } from "lucide-react";
 import {
@@ -22,6 +24,7 @@ import {
   getAgentQueueSummary,
   listAgentJobs,
 } from "@/actions/agent";
+import { getAgentConfig } from "@/actions/agent-config";
 import { getAppVersion } from "@/actions/app";
 import { listProviders } from "@/actions/provider";
 import { pickLocalFiles } from "@/actions/shell";
@@ -31,6 +34,7 @@ import {
   resolveVoiceDisplayName,
 } from "@/actions/voice-display-name";
 import { Button } from "@/components/ui/button";
+import { RemotionBestPracticesPanel } from "@/components/remotion-best-practices-panel";
 import {
   Dialog,
   DialogContent,
@@ -74,6 +78,9 @@ function HomePage() {
   const [providers, setProviders] = useState<
     Awaited<ReturnType<typeof listProviders>>
   >([]);
+  const [agentConfig, setAgentConfig] = useState<
+    Awaited<ReturnType<typeof getAgentConfig>> | undefined
+  >(undefined);
   const [voices, setVoices] = useState<
     Awaited<ReturnType<typeof listVoiceProfiles>>
   >([]);
@@ -89,6 +96,7 @@ function HomePage() {
   const [isDraggingLocalFiles, setIsDraggingLocalFiles] = useState(false);
   const [showUsageDialog, setShowUsageDialog] = useState(false);
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
+  const [showRemotionGuideDialog, setShowRemotionGuideDialog] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const enabledProviders = useMemo(
@@ -190,8 +198,9 @@ function HomePage() {
   }, [agentProviderOptions, enabledProviders, voiceProviderOptions]);
 
   const refresh = useCallback(async () => {
-    const [providerRows, voiceRows, jobRows, summary] = await Promise.all([
+    const [providerRows, config, voiceRows, jobRows, summary] = await Promise.all([
       listProviders(),
+      getAgentConfig(),
       listVoiceProfiles(),
       listAgentJobs(),
       getAgentQueueSummary(),
@@ -207,6 +216,7 @@ function HomePage() {
     }));
 
     setProviders(providerRows);
+    setAgentConfig(config);
     setVoices(mergedVoiceRows);
     setJobs(jobRows);
     setQueueSummary(summary);
@@ -256,6 +266,16 @@ function HomePage() {
       return;
     }
 
+    if (!agentConfig) {
+      setMessage("Agent 配置尚未加载完成，请稍后再试。");
+      return;
+    }
+
+    const toOptional = (value: string | undefined) => {
+      const trimmed = value?.trim() ?? "";
+      return trimmed.length > 0 ? trimmed : undefined;
+    };
+
     setIsCreating(true);
     try {
       const created = await createAgentJob({
@@ -266,6 +286,30 @@ function HomePage() {
         voiceId: form.voiceId || undefined,
         localFiles,
         articleUrls,
+        prompts: {
+          systemPrompt: toOptional(agentConfig.prompts.systemPrompt),
+          topicPrompt: toOptional(agentConfig.prompts.topicPrompt),
+          scriptPrompt: toOptional(agentConfig.prompts.scriptPrompt),
+        },
+        runtimeConfig: {
+          maxResearchSources: agentConfig.runtimeConfig.maxResearchSources,
+          temperature: agentConfig.runtimeConfig.temperature,
+          maxOutputTokens: agentConfig.runtimeConfig.maxOutputTokens,
+        },
+        remotionConfig: {
+          theme: agentConfig.remotionConfig.theme,
+          fps: agentConfig.remotionConfig.fps,
+          width: agentConfig.remotionConfig.width,
+          height: agentConfig.remotionConfig.height,
+          accentColor: toOptional(agentConfig.remotionConfig.accentColor),
+          backgroundStartColor: toOptional(
+            agentConfig.remotionConfig.backgroundStartColor
+          ),
+          backgroundEndColor: toOptional(
+            agentConfig.remotionConfig.backgroundEndColor
+          ),
+        },
+        videoSpec: agentConfig.videoSpec,
       });
 
       setMessage(`任务已创建：${created.jobId.slice(0, 12)}...`);
@@ -389,6 +433,14 @@ function HomePage() {
               <HelpCircle className="h-4 w-4" />
               使用指南
             </Button>
+            <Button
+              onClick={() => setShowRemotionGuideDialog(true)}
+              size="sm"
+              variant="outline"
+            >
+              <Film className="h-4 w-4" />
+              Remotion 规范
+            </Button>
           </div>
         </header>
 
@@ -453,7 +505,10 @@ function HomePage() {
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Button asChild size="sm" variant="ghost">
-                    <Link state={{ selectedJobId: job.jobId }} to="/jobs">
+                    <Link
+                      state={{ selectedJobId: job.jobId } as never}
+                      to="/jobs"
+                    >
                       查看详情
                     </Link>
                   </Button>
@@ -497,6 +552,13 @@ function HomePage() {
             </Button>
             <span>·</span>
             <Button asChild size="sm" variant="ghost">
+              <Link to="/agent-config">
+                <Sliders className="h-3 w-3" />
+                Agent 配置
+              </Link>
+            </Button>
+            <span>·</span>
+            <Button asChild size="sm" variant="ghost">
               <Link to="/voices">
                 <AudioLines className="h-3 w-3" />
                 音色克隆
@@ -517,7 +579,9 @@ function HomePage() {
       <Dialog onOpenChange={setShowNewTaskDialog} open={showNewTaskDialog}>
         <DialogContent
           className="max-h-[88vh] max-w-3xl overflow-auto border-border/80 p-0"
-          onClose={() => setShowNewTaskDialog(false)}
+          onClose={() => {
+            setShowNewTaskDialog(false);
+          }}
         >
           <DialogHeader className="border-border/70 border-b bg-muted/20 pb-4">
             <DialogTitle className="flex items-center gap-2">
@@ -681,6 +745,14 @@ function HomePage() {
               </label>
             </div>
 
+            <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-muted-foreground text-xs">
+              Agent 的 Prompt / Runtime / Remotion 参数已迁移到侧边栏的
+              <Button asChild className="ml-1 h-6 px-2 text-xs" size="sm" variant="ghost">
+                <Link to="/agent-config">Agent 配置</Link>
+              </Button>
+              页面统一维护。
+            </div>
+
             {message ? (
               <div className="rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-muted-foreground text-xs">
                 {message}
@@ -808,6 +880,24 @@ function HomePage() {
               </div>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        onOpenChange={setShowRemotionGuideDialog}
+        open={showRemotionGuideDialog}
+      >
+        <DialogContent className="max-h-[88vh] max-w-3xl overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Film className="h-5 w-5" />
+              Remotion Best Practices（内嵌）
+            </DialogTitle>
+            <DialogDescription>
+              内容来自 remotion-best-practices skill，已内置到应用用于生成视频时参考。
+            </DialogDescription>
+          </DialogHeader>
+          <RemotionBestPracticesPanel />
         </DialogContent>
       </Dialog>
     </div>

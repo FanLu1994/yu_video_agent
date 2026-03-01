@@ -1,4 +1,4 @@
-import { createFileRoute, useLocation } from "@tanstack/react-router";
+import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { FolderOpen } from "lucide-react";
 import {
   type DragEvent,
@@ -16,6 +16,7 @@ import {
   listAgentJobs,
   retryAgentJob,
 } from "@/actions/agent";
+import { getAgentConfig } from "@/actions/agent-config";
 import { listProviders } from "@/actions/provider";
 import { pickLocalFiles } from "@/actions/shell";
 import { listVoiceProfiles } from "@/actions/voice-clone";
@@ -51,6 +52,9 @@ function JobsPage() {
   const [providers, setProviders] = useState<
     Awaited<ReturnType<typeof listProviders>>
   >([]);
+  const [agentConfig, setAgentConfig] = useState<
+    Awaited<ReturnType<typeof getAgentConfig>> | undefined
+  >(undefined);
   const [voices, setVoices] = useState<
     Awaited<ReturnType<typeof listVoiceProfiles>>
   >([]);
@@ -186,8 +190,9 @@ function JobsPage() {
   }, [agentProviderOptions, enabledProviders, voiceProviderOptions]);
 
   const refresh = useCallback(async () => {
-    const [providerRows, voiceRows, jobRows, summary] = await Promise.all([
+    const [providerRows, config, voiceRows, jobRows, summary] = await Promise.all([
       listProviders(),
+      getAgentConfig(),
       listVoiceProfiles(),
       listAgentJobs(),
       getAgentQueueSummary(),
@@ -203,6 +208,7 @@ function JobsPage() {
     }));
 
     setProviders(providerRows);
+    setAgentConfig(config);
     setVoices(mergedVoiceRows);
     setJobs(jobRows);
     setQueueSummary(summary);
@@ -253,6 +259,16 @@ function JobsPage() {
         return;
       }
 
+      if (!agentConfig) {
+        setMessage("Agent 配置尚未加载完成，请稍后再试。");
+        return;
+      }
+
+      const toOptional = (value: string | undefined) => {
+        const trimmed = value?.trim() ?? "";
+        return trimmed.length > 0 ? trimmed : undefined;
+      };
+
       const created = await createAgentJob({
         providerId: form.providerId,
         model: form.model,
@@ -261,6 +277,30 @@ function JobsPage() {
         voiceId: form.voiceId || undefined,
         localFiles,
         articleUrls,
+        prompts: {
+          systemPrompt: toOptional(agentConfig.prompts.systemPrompt),
+          topicPrompt: toOptional(agentConfig.prompts.topicPrompt),
+          scriptPrompt: toOptional(agentConfig.prompts.scriptPrompt),
+        },
+        runtimeConfig: {
+          maxResearchSources: agentConfig.runtimeConfig.maxResearchSources,
+          temperature: agentConfig.runtimeConfig.temperature,
+          maxOutputTokens: agentConfig.runtimeConfig.maxOutputTokens,
+        },
+        remotionConfig: {
+          theme: agentConfig.remotionConfig.theme,
+          fps: agentConfig.remotionConfig.fps,
+          width: agentConfig.remotionConfig.width,
+          height: agentConfig.remotionConfig.height,
+          accentColor: toOptional(agentConfig.remotionConfig.accentColor),
+          backgroundStartColor: toOptional(
+            agentConfig.remotionConfig.backgroundStartColor
+          ),
+          backgroundEndColor: toOptional(
+            agentConfig.remotionConfig.backgroundEndColor
+          ),
+        },
+        videoSpec: agentConfig.videoSpec,
       });
 
       setSelectedJobId(created.jobId);
@@ -539,6 +579,14 @@ function JobsPage() {
                       value={form.articleUrlsText}
                     />
                   </label>
+
+                  <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-muted-foreground text-xs md:col-span-2">
+                    Agent 的 Prompt / Runtime / Remotion 参数已迁移到侧边栏的
+                    <Button asChild className="ml-1 h-6 px-2 text-xs" size="sm" variant="ghost">
+                      <Link to="/agent-config">Agent 配置</Link>
+                    </Button>
+                    页面统一维护。
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button disabled={isPending} onClick={onCreateJob}>
@@ -678,6 +726,18 @@ function JobsPage() {
                       <p className="text-muted-foreground">更新时间</p>
                       <p className="font-medium">
                         {new Date(selectedJob.updatedAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm md:col-span-2">
+                      <p className="text-muted-foreground">输出视频路径</p>
+                      <p className="break-all font-medium">
+                        {selectedJob.artifacts?.videoPath ?? "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-md border border-border/70 bg-muted/20 p-3 text-sm md:col-span-2">
+                      <p className="text-muted-foreground">Manifest 路径</p>
+                      <p className="break-all font-medium">
+                        {selectedJob.artifacts?.manifestPath ?? "-"}
                       </p>
                     </div>
                   </div>

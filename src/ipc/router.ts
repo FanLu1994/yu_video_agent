@@ -1,4 +1,5 @@
 import { agent } from "./agent";
+import { agentConfig } from "./agent-config";
 import { app } from "./app";
 import { provider } from "./provider";
 import { shell } from "./shell";
@@ -13,5 +14,6 @@ export const router = {
   shell,
   provider,
   agent,
+  agentConfig,
   voiceClone,
 };

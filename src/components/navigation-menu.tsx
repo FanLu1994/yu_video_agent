@@ -4,6 +4,7 @@ import {
   Bot,
   Gauge,
   Layers3,
+  Sliders,
   SlidersHorizontal,
 } from "lucide-react";
 
@@ -13,6 +14,12 @@ const NAV_ITEMS = [
     label: "控制台",
     description: "总体概览",
     icon: Gauge,
+  },
+  {
+    to: "/agent-config",
+    label: "Agent 配置",
+    description: "Prompt 与渲染",
+    icon: Sliders,
   },
   {
     to: "/providers",

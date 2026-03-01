@@ -219,28 +219,32 @@ export class AgentJobService {
     await this.appendEvent(nextJob.jobId, "job.started", "Job started.");
 
     try {
-      await this.runtime.runPipeline(async (update) => {
-        const currentJob = await this.getJob(nextJob.jobId);
-        if (!currentJob || currentJob.state === "cancelled") {
-          return;
-        }
-
-        await this.updateJob(nextJob.jobId, (job) => ({
-          ...job,
-          stage: update.stage,
-          currentTool: update.currentTool,
-          progress: update.progress,
-          updatedAt: new Date().toISOString(),
-        }));
-        await this.appendEvent(
-          nextJob.jobId,
-          "job.progress",
-          "Stage progressed.",
-          {
-            stage: update.stage,
-            progress: update.progress,
+      const pipelineResult = await this.runtime.runPipeline({
+        jobId: nextJob.jobId,
+        request: nextJob.request,
+        onStageUpdate: async (update) => {
+          const currentJob = await this.getJob(nextJob.jobId);
+          if (!currentJob || currentJob.state === "cancelled") {
+            return;
           }
-        );
+
+          await this.updateJob(nextJob.jobId, (job) => ({
+            ...job,
+            stage: update.stage,
+            currentTool: update.currentTool,
+            progress: update.progress,
+            updatedAt: new Date().toISOString(),
+          }));
+          await this.appendEvent(
+            nextJob.jobId,
+            "job.progress",
+            "Stage progressed.",
+            {
+              stage: update.stage,
+              progress: update.progress,
+            }
+          );
+        },
       });
 
       const refreshed = await this.getJob(nextJob.jobId);
@@ -249,6 +253,8 @@ export class AgentJobService {
           ...job,
           state: "completed",
           progress: 100,
+          warnings: [...job.warnings, ...pipelineResult.warnings],
+          artifacts: pipelineResult.artifacts,
           updatedAt: new Date().toISOString(),
         }));
         await this.appendEvent(
