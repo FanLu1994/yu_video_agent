@@ -13,3 +13,14 @@ export function listVoiceProfiles() {
 export function getVoiceProfile(voiceId: string) {
   return ipc.client.voiceClone.getVoice({ voiceId });
 }
+
+export function synthesizePreviewVoice(input: {
+  voiceId: string;
+  text: string;
+}) {
+  return ipc.client.voiceClone.synthesizePreviewVoice(input);
+}
+
+export function getCachedPreviewVoice(voiceId: string) {
+  return ipc.client.voiceClone.getCachedPreviewVoice({ voiceId });
+}

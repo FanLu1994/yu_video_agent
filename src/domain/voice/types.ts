@@ -20,4 +20,6 @@ export interface VoiceProfile {
   previewAudioUrl?: string;
   rawResponseSnapshotPath: string;
   createdAt: string;
+  previewText?: string;
+  previewUpdatedAt?: string;
 }
