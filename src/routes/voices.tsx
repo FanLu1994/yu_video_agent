@@ -3,11 +3,12 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useTransition,
 } from "react";
 import { listProviders } from "@/actions/provider";
-import { pickAudioFile } from "@/actions/shell";
+import { pickAudioFile, saveRecordedAudio } from "@/actions/shell";
 import {
   createVoiceClone,
   getCachedPreviewVoice,
@@ -86,6 +87,76 @@ function saveVoiceNameOverrides(overrides: Record<string, string>) {
   );
 }
 
+function mergeAudioChannels(chunks: Float32Array[]) {
+  const totalSamples = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const merged = new Float32Array(totalSamples);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function encodeWav(samples: Float32Array, sampleRate: number) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, value: string) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true); // PCM chunk size
+  view.setUint16(20, 1, true); // audio format = PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeString(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+
+  let offset = 44;
+  for (let index = 0; index < samples.length; index += 1) {
+    const clamped = Math.max(-1, Math.min(1, samples[index] ?? 0));
+    view.setInt16(
+      offset,
+      clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff,
+      true
+    );
+    offset += 2;
+  }
+
+  return buffer;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+function formatDuration(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes.toString().padStart(2, "0")}:${remainingSeconds
+    .toString()
+    .padStart(2, "0")}`;
+}
+
 function buildAutoVoiceId() {
   const timestamp = Date.now().toString(36);
   const randomSuffix = Math.floor(Math.random() * 36 ** 4)
@@ -157,7 +228,20 @@ function VoiceClonePage() {
   const [voiceRenameErrors, setVoiceRenameErrors] = useState<
     Record<string, string | null>
   >({});
+  const [isRecordingCloneAudio, setIsRecordingCloneAudio] = useState(false);
+  const [recordingCloneAudioSeconds, setRecordingCloneAudioSeconds] =
+    useState(0);
+  const [isSavingRecordedCloneAudio, setIsSavingRecordedCloneAudio] =
+    useState(false);
   const [isPending, startTransition] = useTransition();
+
+  const cloneAudioChunksRef = useRef<Float32Array[]>([]);
+  const cloneAudioContextRef = useRef<AudioContext | null>(null);
+  const cloneAudioStreamRef = useRef<MediaStream | null>(null);
+  const cloneAudioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const cloneAudioProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const cloneAudioSampleRateRef = useRef<number>(44_100);
+  const cloneAudioTimerRef = useRef<number | null>(null);
 
   // Per-voice preview state
   const [voicePreviewStates, setVoicePreviewStates] = useState<
@@ -188,6 +272,59 @@ function VoiceClonePage() {
       prev.model === providerModel ? prev : { ...prev, model: providerModel }
     );
   }, [selectedProvider]);
+
+  const stopCloneAudioTimer = useCallback(() => {
+    if (cloneAudioTimerRef.current !== null) {
+      window.clearInterval(cloneAudioTimerRef.current);
+      cloneAudioTimerRef.current = null;
+    }
+  }, []);
+
+  const releaseCloneAudioRecorder = useCallback(() => {
+    const processor = cloneAudioProcessorRef.current;
+    cloneAudioProcessorRef.current = null;
+    if (processor) {
+      processor.onaudioprocess = null;
+      try {
+        processor.disconnect();
+      } catch {
+        // ignore disconnect failure during teardown
+      }
+    }
+
+    const source = cloneAudioSourceRef.current;
+    cloneAudioSourceRef.current = null;
+    if (source) {
+      try {
+        source.disconnect();
+      } catch {
+        // ignore disconnect failure during teardown
+      }
+    }
+
+    const stream = cloneAudioStreamRef.current;
+    cloneAudioStreamRef.current = null;
+    if (stream) {
+      for (const track of stream.getTracks()) {
+        track.stop();
+      }
+    }
+
+    const audioContext = cloneAudioContextRef.current;
+    cloneAudioContextRef.current = null;
+    if (audioContext) {
+      void audioContext.close().catch(() => {
+        // ignore close failure during teardown
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopCloneAudioTimer();
+      releaseCloneAudioRecorder();
+    };
+  }, [releaseCloneAudioRecorder, stopCloneAudioTimer]);
 
   const refreshAll = useCallback(async () => {
     const [providerRows, voiceRows] = await Promise.all([
@@ -297,7 +434,112 @@ function VoiceClonePage() {
     }
   }
 
+  async function onStartCloneAudioRecording() {
+    if (isRecordingCloneAudio || isSavingRecordedCloneAudio) {
+      return;
+    }
+
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      setMessage("当前环境不支持本地录音。");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new AudioContext();
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      const chunks: Float32Array[] = [];
+
+      processor.onaudioprocess = (event) => {
+        const channelData = event.inputBuffer.getChannelData(0);
+        chunks.push(new Float32Array(channelData));
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      cloneAudioChunksRef.current = chunks;
+      cloneAudioSampleRateRef.current = audioContext.sampleRate;
+      cloneAudioStreamRef.current = stream;
+      cloneAudioContextRef.current = audioContext;
+      cloneAudioSourceRef.current = source;
+      cloneAudioProcessorRef.current = processor;
+
+      setRecordingCloneAudioSeconds(0);
+      setIsRecordingCloneAudio(true);
+      stopCloneAudioTimer();
+      cloneAudioTimerRef.current = window.setInterval(() => {
+        setRecordingCloneAudioSeconds((seconds) => seconds + 1);
+      }, 1000);
+      setMessage("录音中，请点击“停止并保存录音”完成。");
+    } catch (error) {
+      releaseCloneAudioRecorder();
+      setMessage(
+        error instanceof Error
+          ? `无法开始录音：${error.message}`
+          : "无法开始录音。"
+      );
+    }
+  }
+
+  async function onStopAndSaveCloneAudioRecording() {
+    if (!isRecordingCloneAudio) {
+      return;
+    }
+
+    setIsSavingRecordedCloneAudio(true);
+    setIsRecordingCloneAudio(false);
+    stopCloneAudioTimer();
+
+    try {
+      releaseCloneAudioRecorder();
+
+      if (cloneAudioChunksRef.current.length === 0) {
+        setMessage("未录到有效音频，请重试。");
+        return;
+      }
+
+      const mergedAudio = mergeAudioChannels(cloneAudioChunksRef.current);
+      const wavBuffer = encodeWav(mergedAudio, cloneAudioSampleRateRef.current);
+      const base64Audio = arrayBufferToBase64(wavBuffer);
+      const filePath = await saveRecordedAudio({
+        base64Audio,
+        extension: "wav",
+        fileNamePrefix: "voice-clone-recording",
+      });
+
+      setForm((prev) => ({
+        ...prev,
+        cloneAudioPath: filePath,
+      }));
+      setMessage(`录音已保存：${filePath}`);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? `录音保存失败：${error.message}`
+          : "录音保存失败。"
+      );
+    } finally {
+      cloneAudioChunksRef.current = [];
+      setRecordingCloneAudioSeconds(0);
+      setIsSavingRecordedCloneAudio(false);
+    }
+  }
+
   async function onClone() {
+    if (isRecordingCloneAudio || isSavingRecordedCloneAudio) {
+      setMessage("请先完成录音保存后再开始克隆。");
+      return;
+    }
+
     const input = normalizeVoiceCloneInput(form, selectedProvider);
     const voiceId = input.voiceId || buildAutoVoiceId();
     const missingFields = getMissingRequiredFields(input);
@@ -571,17 +813,61 @@ function VoiceClonePage() {
                         value={form.cloneAudioPath}
                       />
                       <Button
-                        disabled={isPending || isCloning}
+                        disabled={
+                          isPending ||
+                          isCloning ||
+                          isRecordingCloneAudio ||
+                          isSavingRecordedCloneAudio
+                        }
                         onClick={onPickCloneAudioPath}
                         type="button"
                         variant="outline"
                       >
                         选择文件
                       </Button>
+                      <Button
+                        disabled={
+                          isPending ||
+                          isCloning ||
+                          isRecordingCloneAudio ||
+                          isSavingRecordedCloneAudio
+                        }
+                        onClick={onStartCloneAudioRecording}
+                        type="button"
+                        variant="outline"
+                      >
+                        开始录音
+                      </Button>
+                      <Button
+                        disabled={
+                          isPending ||
+                          isCloning ||
+                          !isRecordingCloneAudio ||
+                          isSavingRecordedCloneAudio
+                        }
+                        onClick={onStopAndSaveCloneAudioRecording}
+                        type="button"
+                        variant="outline"
+                      >
+                        {isSavingRecordedCloneAudio
+                          ? "保存中..."
+                          : `停止并保存录音${
+                              isRecordingCloneAudio
+                                ? ` (${formatDuration(
+                                    recordingCloneAudioSeconds
+                                  )})`
+                                : ""
+                            }`}
+                      </Button>
                     </div>
                     <code className="mono-hint">
                       {form.cloneAudioPath || "未选择文件"}
                     </code>
+                    {isRecordingCloneAudio ? (
+                      <p className="mt-1 text-amber-700 text-xs">
+                        正在录音：{formatDuration(recordingCloneAudioSeconds)}
+                      </p>
+                    ) : null}
                   </label>
                   <label className="field-label md:col-span-2">
                     <span>参考音频（可选）</span>
