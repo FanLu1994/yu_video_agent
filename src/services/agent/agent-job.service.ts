@@ -9,8 +9,8 @@ import { JsonFileStore } from "@/services/storage/json-file-store";
 import type { AgentRuntimeService } from "./agent-runtime.service";
 
 interface JobsDb {
-  jobs: JobRecord[];
   events: JobEvent[];
+  jobs: JobRecord[];
 }
 
 export class AgentJobService {
@@ -44,7 +44,10 @@ export class AgentJobService {
     }));
   }
 
-  private async updateJob(jobId: string, updater: (job: JobRecord) => JobRecord) {
+  private async updateJob(
+    jobId: string,
+    updater: (job: JobRecord) => JobRecord
+  ) {
     await this.db.update((prev) => ({
       ...prev,
       jobs: prev.jobs.map((job) => (job.jobId === jobId ? updater(job) : job)),
@@ -110,7 +113,9 @@ export class AgentJobService {
 
   async listJobs(): Promise<JobRecord[]> {
     const data = await this.db.read();
-    return [...data.jobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return [...data.jobs].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt)
+    );
   }
 
   async getJob(jobId: string): Promise<JobRecord | undefined> {
@@ -227,10 +232,15 @@ export class AgentJobService {
           progress: update.progress,
           updatedAt: new Date().toISOString(),
         }));
-        await this.appendEvent(nextJob.jobId, "job.progress", "Stage progressed.", {
-          stage: update.stage,
-          progress: update.progress,
-        });
+        await this.appendEvent(
+          nextJob.jobId,
+          "job.progress",
+          "Stage progressed.",
+          {
+            stage: update.stage,
+            progress: update.progress,
+          }
+        );
       });
 
       const refreshed = await this.getJob(nextJob.jobId);
@@ -241,7 +251,11 @@ export class AgentJobService {
           progress: 100,
           updatedAt: new Date().toISOString(),
         }));
-        await this.appendEvent(nextJob.jobId, "job.completed", "Job completed.");
+        await this.appendEvent(
+          nextJob.jobId,
+          "job.completed",
+          "Job completed."
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";

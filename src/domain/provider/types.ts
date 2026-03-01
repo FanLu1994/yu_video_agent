@@ -6,31 +6,31 @@ export type ProviderKind =
   | "minimax";
 
 export interface ProviderRetryPolicy {
-  maxAttempts: number;
   backoffMs: number;
+  maxAttempts: number;
 }
 
 export interface ProviderConfig {
+  baseUrl?: string;
+  createdAt: string;
+  displayName: string;
+  enabled: boolean;
   id: string;
   kind: ProviderKind;
-  displayName: string;
-  baseUrl?: string;
   model: string;
-  enabled: boolean;
-  timeoutMs?: number;
   retry?: ProviderRetryPolicy;
-  createdAt: string;
+  timeoutMs?: number;
   updatedAt: string;
 }
 
 export interface SaveProviderConfigInput {
+  apiKey?: string;
+  baseUrl?: string;
+  displayName: string;
+  enabled: boolean;
   id: string;
   kind: ProviderKind;
-  displayName: string;
-  baseUrl?: string;
   model: string;
-  enabled: boolean;
-  timeoutMs?: number;
   retry?: ProviderRetryPolicy;
-  apiKey?: string;
+  timeoutMs?: number;
 }

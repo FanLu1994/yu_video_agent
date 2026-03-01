@@ -24,6 +24,7 @@ export async function ensureRuntimeDirectories() {
   const root = getDataRootPath();
   await mkdir(root, { recursive: true });
   await mkdir(path.join(root, "db"), { recursive: true });
+  await mkdir(path.join(root, "logs"), { recursive: true });
   await mkdir(path.join(root, "secure"), { recursive: true });
   await mkdir(path.join(root, "voice"), { recursive: true });
   await mkdir(path.join(root, "output"), { recursive: true });

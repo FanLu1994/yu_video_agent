@@ -9,9 +9,9 @@ import { userInfo } from "node:os";
 import { JsonFileStore } from "../storage/json-file-store";
 
 interface EncryptedSecretRecord {
-  iv: string;
   authTag: string;
   ciphertext: string;
+  iv: string;
 }
 
 type EncryptedSecretsMap = Record<string, EncryptedSecretRecord>;

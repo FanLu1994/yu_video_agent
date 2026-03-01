@@ -31,7 +31,7 @@ export class VoiceCloneService {
 
   async listVoices(): Promise<VoiceProfile[]> {
     const data = await this.db.read();
-    const hydratedVoices = await this.hydrateMissingPreviewUrls(data.voices);
+    const hydratedVoices = await this.hydrateVoiceProfiles(data.voices);
     return hydratedVoices.sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt)
     );
@@ -218,27 +218,36 @@ export class VoiceCloneService {
     }
   }
 
-  private async hydrateMissingPreviewUrls(voices: VoiceProfile[]) {
+  private async hydrateVoiceProfiles(voices: VoiceProfile[]) {
     let changed = false;
 
     const nextVoices = await Promise.all(
       voices.map(async (voice) => {
-        if (voice.previewAudioUrl || !voice.rawResponseSnapshotPath) {
-          return voice;
+        const displayName = voice.displayName?.trim() || voice.voiceId;
+        let nextVoice = voice;
+
+        if (displayName !== voice.displayName) {
+          nextVoice = {
+            ...nextVoice,
+            displayName,
+          };
+          changed = true;
         }
 
-        const previewAudioUrl = await this.extractPreviewFromSnapshot(
-          voice.rawResponseSnapshotPath
-        );
-        if (!previewAudioUrl) {
-          return voice;
+        if (!voice.previewAudioUrl && voice.rawResponseSnapshotPath) {
+          const previewAudioUrl = await this.extractPreviewFromSnapshot(
+            voice.rawResponseSnapshotPath
+          );
+          if (previewAudioUrl) {
+            nextVoice = {
+              ...nextVoice,
+              previewAudioUrl,
+            };
+            changed = true;
+          }
         }
 
-        changed = true;
-        return {
-          ...voice,
-          previewAudioUrl,
-        };
+        return nextVoice;
       })
     );
 
@@ -464,6 +473,7 @@ export class VoiceCloneService {
 
     const profile: VoiceProfile = {
       voiceId: normalizedRequest.voiceId,
+      displayName: normalizedRequest.voiceId,
       providerId: normalizedRequest.providerId,
       status: "ready",
       sourceAudioPath: persisted.sourcePath,
@@ -493,11 +503,54 @@ export class VoiceCloneService {
     return profile;
   }
 
+  async updateVoiceDisplayName(
+    voiceId: string,
+    displayName: string
+  ): Promise<VoiceProfile> {
+    const normalizedVoiceId = voiceId.trim();
+    const normalizedDisplayName = displayName.trim();
+
+    if (!normalizedVoiceId) {
+      throw new Error("voiceId is required.");
+    }
+    if (!normalizedDisplayName) {
+      throw new Error("displayName is required.");
+    }
+
+    let updatedVoice: VoiceProfile | undefined;
+
+    await this.db.update((prev) => {
+      const nextVoices = prev.voices.map((voice) => {
+        if (voice.voiceId !== normalizedVoiceId) {
+          return voice;
+        }
+
+        updatedVoice = {
+          ...voice,
+          displayName: normalizedDisplayName,
+        };
+
+        return updatedVoice;
+      });
+
+      return {
+        ...prev,
+        voices: nextVoices,
+      };
+    });
+
+    if (!updatedVoice) {
+      throw new Error(`Voice '${normalizedVoiceId}' not found.`);
+    }
+
+    return updatedVoice;
+  }
+
   async synthesizePreviewVoice(
     voiceId: string,
     text: string
   ): Promise<{ previewAudioUrl: string }> {
-    if (!voiceId || !text) {
+    if (!(voiceId && text)) {
       throw new Error("voiceId and text are required.");
     }
 
@@ -532,8 +585,7 @@ export class VoiceCloneService {
       throw new Error(this.formatMiniMaxError("试听生成", error));
     }
 
-    const synthesizedAudio =
-      this.extractSynthesizeAudioHex(synthesizeResponse);
+    const synthesizedAudio = this.extractSynthesizeAudioHex(synthesizeResponse);
 
     // 使用固定文件名，覆盖之前的试听音频
     const previewGenerated = await this.persistGeneratedPreviewAudio(
@@ -591,16 +643,16 @@ export class VoiceCloneService {
     }
 
     // 检查是否有缓存的试听元数据
-    const previewText = (voice as any).previewText;
-    const previewAudioUrl = (voice as any).previewAudioUrl;
-    const previewUpdatedAt = (voice as any).previewUpdatedAt;
+    const previewText = voice.previewText;
+    const previewAudioUrl = voice.previewAudioUrl;
+    const previewUpdatedAt = voice.previewUpdatedAt;
 
-    if (!previewAudioUrl || !previewText) {
+    if (!(previewAudioUrl && previewText)) {
       return null;
     }
 
     // 验证文件是否还存在
-    const previewAudioPath = (voice as any).previewAudioPath;
+    const previewAudioPath = voice.previewAudioPath;
     if (previewAudioPath) {
       try {
         await stat(previewAudioPath);

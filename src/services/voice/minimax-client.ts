@@ -2,16 +2,23 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 export type MiniMaxUploadPurpose = "voice_clone" | "prompt_audio";
+const TRAILING_SLASHES_REGEX = /\/+$/;
 
 export interface MiniMaxClonePayload {
-  file_id: string;
-  voice_id: string;
   clone_prompt?: {
     prompt_audio: string;
     prompt_text: string;
   };
-  text: string;
+  file_id: string;
   model: string;
+  text: string;
+  voice_id: string;
+}
+
+export interface MiniMaxSynthesizePayload {
+  model: string;
+  text: string;
+  voice_id: string;
 }
 
 interface MiniMaxUploadResponse {
@@ -37,13 +44,16 @@ function mimeFromExtension(filePath: string) {
 }
 
 export class MiniMaxClient {
-  constructor(
-    private readonly baseUrl: string,
-    private readonly apiKey: string
-  ) {}
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+
+  constructor(baseUrl: string, apiKey: string) {
+    this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+  }
 
   private buildV1Endpoint(pathWithoutLeadingSlash: string) {
-    const normalizedBase = this.baseUrl.replace(/\/+$/, "");
+    const normalizedBase = this.baseUrl.replace(TRAILING_SLASHES_REGEX, "");
     if (normalizedBase.endsWith("/v1")) {
       return `${normalizedBase}/${pathWithoutLeadingSlash}`;
     }
@@ -62,8 +72,22 @@ export class MiniMaxClient {
   private async handleResponse(response: Response) {
     if (!response.ok) {
       const payload = await this.parseJsonResponse(response);
+      const baseResp =
+        payload.base_resp &&
+        typeof payload.base_resp === "object" &&
+        !Array.isArray(payload.base_resp)
+          ? (payload.base_resp as Record<string, unknown>)
+          : undefined;
+      let statusMessage: string | undefined;
+      if (typeof baseResp?.status_msg === "string") {
+        statusMessage = baseResp.status_msg;
+      } else if (typeof payload.message === "string") {
+        statusMessage = payload.message;
+      }
       throw new Error(
-        `MiniMax API request failed (${response.status}): ${JSON.stringify(payload)}`
+        `MiniMax API request failed (${response.status})` +
+          (statusMessage ? `: ${statusMessage}` : "") +
+          `; payload=${JSON.stringify(payload)}`
       );
     }
 
@@ -105,6 +129,37 @@ export class MiniMaxClient {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+    });
+
+    const data = await this.handleResponse(response);
+    return data;
+  }
+
+  async synthesizeSpeech(payload: MiniMaxSynthesizePayload) {
+    const response = await fetch(this.buildV1Endpoint("t2a_v2"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: payload.model,
+        text: payload.text,
+        stream: false,
+        voice_setting: {
+          voice_id: payload.voice_id,
+          speed: 1,
+          vol: 1,
+          pitch: 0,
+        },
+        audio_setting: {
+          sample_rate: 32_000,
+          bitrate: 128_000,
+          format: "mp3",
+          channel: 1,
+        },
+        subtitle_enable: false,
+      }),
     });
 
     const data = await this.handleResponse(response);

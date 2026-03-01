@@ -5,7 +5,10 @@ import { ensureRuntimeDirectories, getDataRootPath } from "./runtime-paths";
 export class JsonFileStore<T> {
   private readonly filePath: string;
 
-  constructor(fileName: string, private readonly defaultValue: T) {
+  constructor(
+    fileName: string,
+    private readonly defaultValue: T
+  ) {
     this.filePath = path.join(getDataRootPath(), "db", fileName);
   }
 

@@ -21,7 +21,10 @@ function normalizeModelBaseUrl(provider: ProviderConfig): string {
     return "https://api.openai.com/v1";
   }
 
-  if (provider.kind === "openai-compatible" || provider.kind === "domestic-compatible") {
+  if (
+    provider.kind === "openai-compatible" ||
+    provider.kind === "domestic-compatible"
+  ) {
     return base;
   }
 
@@ -51,6 +54,6 @@ export function buildPiModel(provider: ProviderConfig): Model<Api> {
       cacheWrite: 0,
     },
     contextWindow: 128_000,
-    maxTokens: 8_192,
+    maxTokens: 8192,
   };
 }

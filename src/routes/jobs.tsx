@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useLocation } from "@tanstack/react-router";
 import {
   useCallback,
   useEffect,
@@ -30,6 +30,7 @@ interface JobFormState {
 type JobsTab = "create" | "queue" | "detail" | "events";
 
 function JobsPage() {
+  const location = useLocation();
   const [providers, setProviders] = useState<
     Awaited<ReturnType<typeof listProviders>>
   >([]);
@@ -43,7 +44,7 @@ function JobsPage() {
   const [events, setEvents] = useState<
     Awaited<ReturnType<typeof getAgentJobEvents>>
   >([]);
-  const [activeTab, setActiveTab] = useState<JobsTab>("create");
+  const [activeTab, setActiveTab] = useState<JobsTab>("queue");
   const [queueSummary, setQueueSummary] = useState<
     Awaited<ReturnType<typeof getAgentQueueSummary>> | undefined
   >(undefined);
@@ -56,6 +57,15 @@ function JobsPage() {
   });
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+
+  // 从主页传递的状态中恢复选中的任务ID
+  useEffect(() => {
+    const state = location.state as { selectedJobId?: string } | null;
+    if (state?.selectedJobId) {
+      setSelectedJobId(state.selectedJobId);
+      setActiveTab("detail");
+    }
+  }, [location.state]);
 
   const enabledProviders = useMemo(
     () => providers.filter((provider) => provider.enabled),
@@ -261,7 +271,7 @@ function JobsPage() {
                     />
                   </label>
                   <label className="field-label md:col-span-2">
-                    <span>音色 ID（可选）</span>
+                    <span>音色（可选）</span>
                     <select
                       className="field-input"
                       onChange={(event) =>
@@ -275,7 +285,7 @@ function JobsPage() {
                       <option value="">（不使用）</option>
                       {voices.map((voice) => (
                         <option key={voice.voiceId} value={voice.voiceId}>
-                          {voice.voiceId}
+                          {voice.displayName} ({voice.voiceId})
                         </option>
                       ))}
                     </select>

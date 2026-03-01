@@ -3,8 +3,8 @@ import type {
   SaveProviderConfigInput,
 } from "@/domain/provider/types";
 import { JsonFileStore } from "@/services/storage/json-file-store";
+import type { SecretVault } from "../security/secret-vault";
 import { buildPiModel } from "./pi-model";
-import { SecretVault } from "../security/secret-vault";
 
 interface ProvidersDb {
   providers: ProviderConfig[];
@@ -22,7 +22,7 @@ const DEFAULT_MINIMAX_PROVIDER: ProviderConfig = {
   timeoutMs: 30_000,
   retry: {
     maxAttempts: 2,
-    backoffMs: 1_000,
+    backoffMs: 1000,
   },
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
@@ -45,10 +45,14 @@ export class ProviderConfigService {
     return providers.find((provider) => provider.id === id);
   }
 
-  async saveProviderConfig(input: SaveProviderConfigInput): Promise<ProviderConfig> {
+  async saveProviderConfig(
+    input: SaveProviderConfigInput
+  ): Promise<ProviderConfig> {
     const now = new Date().toISOString();
     const data = await this.db.read();
-    const existing = data.providers.find((provider) => provider.id === input.id);
+    const existing = data.providers.find(
+      (provider) => provider.id === input.id
+    );
 
     const config: ProviderConfig = {
       id: input.id,
@@ -132,8 +136,7 @@ export class ProviderConfigService {
           messages: [
             {
               role: "user",
-              content:
-                "Health check. Reply with exactly one word: ready.",
+              content: "Health check. Reply with exactly one word: ready.",
               timestamp: Date.now(),
             },
           ],
@@ -146,10 +149,12 @@ export class ProviderConfigService {
       );
 
       const firstText = response.content.find((item) => item.type === "text");
-      const preview = firstText?.type === "text" ? firstText.text.slice(0, 80) : "";
+      const preview =
+        firstText?.type === "text" ? firstText.text.slice(0, 80) : "";
 
       return {
-        ok: response.stopReason !== "error" && response.stopReason !== "aborted",
+        ok:
+          response.stopReason !== "error" && response.stopReason !== "aborted",
         message: preview
           ? `Provider '${providerId}' reachable. Response: ${preview}`
           : `Provider '${providerId}' reachable.`,

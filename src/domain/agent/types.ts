@@ -28,39 +28,42 @@ export interface JobError {
 
 export interface VideoSpec {
   aspect: "16:9";
-  resolution: "1920x1080";
-  durationSecMin: number;
   durationSecMax: number;
+  durationSecMin: number;
+  resolution: "1920x1080";
 }
 
 export interface RunAgentJobRequest {
-  localFiles: string[];
   articleUrls: string[];
-  providerId: string;
+  localFiles: string[];
   model: string;
-  voiceId?: string;
+  providerId: string;
   videoSpec?: VideoSpec;
+  voiceId?: string;
 }
 
 export interface JobRecord {
-  jobId: string;
   createdAt: string;
-  updatedAt: string;
-  state: JobState;
-  stage: Stage;
+  currentTool?: string;
+  errors: JobError[];
+  jobId: string;
   progress: number;
   queuePosition: number;
-  currentTool?: string;
-  retryCount: number;
   request: RunAgentJobRequest;
+  retryCount: number;
+  stage: Stage;
+  state: JobState;
+  updatedAt: string;
   warnings: JobWarning[];
-  errors: JobError[];
 }
 
 export interface JobEvent {
+  createdAt: string;
   id: string;
   jobId: string;
-  createdAt: string;
+  message: string;
+  progress?: number;
+  stage?: Stage;
   type:
     | "job.created"
     | "job.started"
@@ -69,7 +72,4 @@ export interface JobEvent {
     | "job.failed"
     | "job.completed"
     | "job.cancelled";
-  stage?: Stage;
-  progress?: number;
-  message: string;
 }

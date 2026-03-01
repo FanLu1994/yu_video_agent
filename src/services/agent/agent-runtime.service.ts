@@ -12,9 +12,9 @@ const DEFAULT_STAGES: Stage[] = [
 ];
 
 export interface RuntimeStageUpdate {
-  stage: Stage;
-  progress: number;
   currentTool: string;
+  progress: number;
+  stage: Stage;
 }
 
 export class AgentRuntimeService {
@@ -52,7 +52,9 @@ export class AgentRuntimeService {
     };
   }
 
-  async runPipeline(onStageUpdate: (update: RuntimeStageUpdate) => Promise<void>) {
+  async runPipeline(
+    onStageUpdate: (update: RuntimeStageUpdate) => Promise<void>
+  ) {
     await this.initialize();
 
     const total = DEFAULT_STAGES.length;

@@ -1,25 +1,26 @@
 export type VoiceCloneStatus = "ready" | "failed";
 
 export interface CreateVoiceCloneRequest {
-  providerId: string;
-  voiceId: string;
   cloneAudioPath: string;
+  model: string;
   promptAudioPath?: string;
   promptText?: string;
+  providerId: string;
   sampleText: string;
-  model: string;
+  voiceId: string;
 }
 
 export interface VoiceProfile {
-  voiceId: string;
-  providerId: string;
-  status: VoiceCloneStatus;
-  sourceAudioPath: string;
-  promptAudioPath?: string;
+  createdAt: string;
+  displayName: string;
   previewAudioPath?: string;
   previewAudioUrl?: string;
-  rawResponseSnapshotPath: string;
-  createdAt: string;
   previewText?: string;
   previewUpdatedAt?: string;
+  promptAudioPath?: string;
+  providerId: string;
+  rawResponseSnapshotPath: string;
+  sourceAudioPath: string;
+  status: VoiceCloneStatus;
+  voiceId: string;
 }
