@@ -8,6 +8,10 @@ export function pickAudioFile(title?: string) {
   return ipc.client.shell.pickAudioFile({ title });
 }
 
+export function pickLocalFiles(title?: string) {
+  return ipc.client.shell.pickLocalFiles({ title });
+}
+
 export function saveRecordedAudio(input: {
   base64Audio: string;
   extension?: "wav" | "mp3" | "m4a";

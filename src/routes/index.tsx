@@ -3,12 +3,19 @@ import {
   AudioLines,
   Bot,
   CirclePlus,
+  FolderOpen,
   HelpCircle,
   Layers3,
   Play,
   SlidersHorizontal,
 } from "lucide-react";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import {
+  type DragEvent,
+  useCallback,
+  useEffect,
+  useState,
+  useTransition,
+} from "react";
 import {
   createAgentJob,
   getAgentQueueSummary,
@@ -16,7 +23,12 @@ import {
 } from "@/actions/agent";
 import { getAppVersion } from "@/actions/app";
 import { listProviders } from "@/actions/provider";
+import { pickLocalFiles } from "@/actions/shell";
 import { listVoiceProfiles } from "@/actions/voice-clone";
+import {
+  loadVoiceNameOverrides,
+  resolveVoiceDisplayName,
+} from "@/actions/voice-display-name";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,6 +37,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  extractDroppedFilePaths,
+  mergeMultilineItems,
+} from "@/utils/file-drop";
 
 interface JobFormState {
   articleUrlsText: string;
@@ -61,6 +77,7 @@ function HomePage() {
   const [form, setForm] = useState<JobFormState>(DEFAULT_FORM);
   const [message, setMessage] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [isDraggingLocalFiles, setIsDraggingLocalFiles] = useState(false);
   const [showUsageDialog, setShowUsageDialog] = useState(false);
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -94,9 +111,18 @@ function HomePage() {
       listAgentJobs(),
       getAgentQueueSummary(),
     ]);
+    const voiceNameOverrides = loadVoiceNameOverrides();
+    const mergedVoiceRows = voiceRows.map((voice) => ({
+      ...voice,
+      displayName: resolveVoiceDisplayName(
+        voice.voiceId,
+        voice.displayName,
+        voiceNameOverrides
+      ),
+    }));
 
     setProviders(providerRows);
-    setVoices(voiceRows);
+    setVoices(mergedVoiceRows);
     setJobs(jobRows);
     setQueueSummary(summary);
   }, []);
@@ -188,6 +214,56 @@ function HomePage() {
         return "排队中";
       default:
         return state;
+    }
+  }
+
+  function onLocalFilesDragEnter(event: DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    setIsDraggingLocalFiles(true);
+  }
+
+  function onLocalFilesDragLeave(event: DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    setIsDraggingLocalFiles(false);
+  }
+
+  function onLocalFilesDragOver(event: DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDraggingLocalFiles(true);
+  }
+
+  function onLocalFilesDrop(event: DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    setIsDraggingLocalFiles(false);
+
+    const droppedPaths = extractDroppedFilePaths(event.dataTransfer);
+    if (droppedPaths.length === 0) {
+      setMessage("未检测到可用文件路径，请直接拖入本地文件。");
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      localFilesText: mergeMultilineItems(prev.localFilesText, droppedPaths),
+    }));
+    setMessage(`已添加 ${droppedPaths.length} 个文件。`);
+  }
+
+  async function onPickLocalFiles() {
+    try {
+      const selectedPaths = await pickLocalFiles("选择本地文件");
+      if (selectedPaths.length === 0) {
+        return;
+      }
+
+      setForm((prev) => ({
+        ...prev,
+        localFilesText: mergeMultilineItems(prev.localFilesText, selectedPaths),
+      }));
+      setMessage(`已添加 ${selectedPaths.length} 个文件。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "选择文件失败。");
     }
   }
 
@@ -296,7 +372,9 @@ function HomePage() {
             {jobs.length === 0 ? (
               <div className="rounded-lg border border-border/70 border-dashed px-4 py-12 text-center">
                 <Layers3 className="mx-auto mb-3 h-12 w-12 text-muted-foreground" />
-                <p className="mb-2 text-muted-foreground text-sm">暂无任务记录</p>
+                <p className="mb-2 text-muted-foreground text-sm">
+                  暂无任务记录
+                </p>
                 <p className="mb-4 text-muted-foreground text-xs">
                   点击"新建任务"按钮创建您的第一个任务
                 </p>
@@ -411,7 +489,7 @@ function HomePage() {
                 <option value="">不使用音色</option>
                 {voices.map((voice) => (
                   <option key={voice.voiceId} value={voice.voiceId}>
-                    {voice.displayName} ({voice.voiceId})
+                    {voice.displayName}
                   </option>
                 ))}
               </select>
@@ -419,15 +497,33 @@ function HomePage() {
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <label className="field-label">
-                <span>本地文件（每行一个）</span>
+                <div className="flex items-center justify-between gap-2">
+                  <span>本地文件（每行一个，可拖拽）</span>
+                  <Button
+                    disabled={isCreating || isPending}
+                    onClick={onPickLocalFiles}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                    选择文件
+                  </Button>
+                </div>
                 <textarea
-                  className="field-input min-h-28"
+                  className={`field-input min-h-28 transition-colors ${
+                    isDraggingLocalFiles ? "border-primary/70 bg-primary/5" : ""
+                  }`}
                   onChange={(event) =>
                     setForm((prev) => ({
                       ...prev,
                       localFilesText: event.target.value,
                     }))
                   }
+                  onDragEnter={onLocalFilesDragEnter}
+                  onDragLeave={onLocalFilesDragLeave}
+                  onDragOver={onLocalFilesDragOver}
+                  onDrop={onLocalFilesDrop}
                   placeholder={"D:\\docs\\input1.md\nD:\\docs\\input2.pdf"}
                   value={form.localFilesText}
                 />

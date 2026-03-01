@@ -1,6 +1,6 @@
-import { os } from "@orpc/server";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { os } from "@orpc/server";
 import { dialog, shell } from "electron";
 import { getDataRootPath } from "@/services/storage/runtime-paths";
 import { ipcContext } from "../context";
@@ -8,6 +8,7 @@ import { runLoggedIpcHandler } from "../logging";
 import {
   openExternalLinkInputSchema,
   pickAudioFileInputSchema,
+  pickLocalFilesInputSchema,
   saveRecordedAudioInputSchema,
 } from "./schemas";
 
@@ -41,6 +42,24 @@ export const pickAudioFile = os
       }
 
       return result.filePaths[0] ?? null;
+    });
+  });
+
+export const pickLocalFiles = os
+  .use(ipcContext.mainWindowContext)
+  .input(pickLocalFilesInputSchema)
+  .handler(({ context, input }) => {
+    return runLoggedIpcHandler("shell.pickLocalFiles", input, async () => {
+      const result = await dialog.showOpenDialog(context.window, {
+        title: input.title ?? "选择文件",
+        properties: ["openFile", "multiSelections"],
+      });
+
+      if (result.canceled) {
+        return [] as string[];
+      }
+
+      return result.filePaths;
     });
   });
 

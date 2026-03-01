@@ -1,5 +1,7 @@
 import { createFileRoute, useLocation } from "@tanstack/react-router";
+import { FolderOpen } from "lucide-react";
 import {
+  type DragEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -15,9 +17,18 @@ import {
   retryAgentJob,
 } from "@/actions/agent";
 import { listProviders } from "@/actions/provider";
+import { pickLocalFiles } from "@/actions/shell";
 import { listVoiceProfiles } from "@/actions/voice-clone";
+import {
+  loadVoiceNameOverrides,
+  resolveVoiceDisplayName,
+} from "@/actions/voice-display-name";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  extractDroppedFilePaths,
+  mergeMultilineItems,
+} from "@/utils/file-drop";
 
 interface JobFormState {
   articleUrlsText: string;
@@ -55,6 +66,7 @@ function JobsPage() {
     localFilesText: "",
     articleUrlsText: "",
   });
+  const [isDraggingLocalFiles, setIsDraggingLocalFiles] = useState(false);
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
 
@@ -99,9 +111,18 @@ function JobsPage() {
       listAgentJobs(),
       getAgentQueueSummary(),
     ]);
+    const voiceNameOverrides = loadVoiceNameOverrides();
+    const mergedVoiceRows = voiceRows.map((voice) => ({
+      ...voice,
+      displayName: resolveVoiceDisplayName(
+        voice.voiceId,
+        voice.displayName,
+        voiceNameOverrides
+      ),
+    }));
 
     setProviders(providerRows);
-    setVoices(voiceRows);
+    setVoices(mergedVoiceRows);
     setJobs(jobRows);
     setQueueSummary(summary);
 
@@ -200,6 +221,56 @@ function JobsPage() {
     }
   }
 
+  function onLocalFilesDragEnter(event: DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    setIsDraggingLocalFiles(true);
+  }
+
+  function onLocalFilesDragLeave(event: DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    setIsDraggingLocalFiles(false);
+  }
+
+  function onLocalFilesDragOver(event: DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsDraggingLocalFiles(true);
+  }
+
+  function onLocalFilesDrop(event: DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    setIsDraggingLocalFiles(false);
+
+    const droppedPaths = extractDroppedFilePaths(event.dataTransfer);
+    if (droppedPaths.length === 0) {
+      setMessage("未检测到可用文件路径，请直接拖入本地文件。");
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      localFilesText: mergeMultilineItems(prev.localFilesText, droppedPaths),
+    }));
+    setMessage(`已添加 ${droppedPaths.length} 个文件。`);
+  }
+
+  async function onPickLocalFiles() {
+    try {
+      const selectedPaths = await pickLocalFiles("选择本地文件");
+      if (selectedPaths.length === 0) {
+        return;
+      }
+
+      setForm((prev) => ({
+        ...prev,
+        localFilesText: mergeMultilineItems(prev.localFilesText, selectedPaths),
+      }));
+      setMessage(`已添加 ${selectedPaths.length} 个文件。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "选择文件失败。");
+    }
+  }
+
   return (
     <div className="app-page">
       <section className="app-panel min-h-0 xl:col-span-12">
@@ -285,21 +356,41 @@ function JobsPage() {
                       <option value="">（不使用）</option>
                       {voices.map((voice) => (
                         <option key={voice.voiceId} value={voice.voiceId}>
-                          {voice.displayName} ({voice.voiceId})
+                          {voice.displayName}
                         </option>
                       ))}
                     </select>
                   </label>
                   <label className="field-label">
-                    <span>本地文件（每行一个）</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span>本地文件（每行一个，可拖拽）</span>
+                      <Button
+                        disabled={isPending}
+                        onClick={onPickLocalFiles}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        <FolderOpen className="h-4 w-4" />
+                        选择文件
+                      </Button>
+                    </div>
                     <textarea
-                      className="field-input min-h-24"
+                      className={`field-input min-h-24 transition-colors ${
+                        isDraggingLocalFiles
+                          ? "border-primary/70 bg-primary/5"
+                          : ""
+                      }`}
                       onChange={(event) =>
                         setForm((prev) => ({
                           ...prev,
                           localFilesText: event.target.value,
                         }))
                       }
+                      onDragEnter={onLocalFilesDragEnter}
+                      onDragLeave={onLocalFilesDragLeave}
+                      onDragOver={onLocalFilesDragOver}
+                      onDrop={onLocalFilesDrop}
                       placeholder={"D:\\docs\\input1.md\nD:\\docs\\input2.pdf"}
                       value={form.localFilesText}
                     />

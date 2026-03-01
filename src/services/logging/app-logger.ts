@@ -8,18 +8,12 @@ interface LogMeta {
   [key: string]: unknown;
 }
 
-interface LogRecord {
-  level: LogLevel;
-  message: string;
-  meta?: LogMeta;
-  processType: string;
-  ts: string;
-}
-
 const ERROR_NAME_KEY = "name";
 const ERROR_STACK_KEY = "stack";
 const ERROR_MESSAGE_KEY = "message";
 const MAX_SERIALIZED_LENGTH = 16_000;
+const MAX_META_DEPTH = 4;
+const QUOTED_VALUE_PATTERN = /\s|=|"/;
 
 function normalizeUnknown(value: unknown): unknown {
   if (value instanceof Error) {
@@ -73,6 +67,95 @@ function currentProcessType() {
   return "browser";
 }
 
+function formatTimestamp(date: Date) {
+  const iso = date.toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 23)} UTC`;
+}
+
+function sanitizeLogText(value: string) {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\r", "\\r")
+    .replaceAll("\n", "\\n");
+}
+
+function formatLogValue(value: unknown): string {
+  if (typeof value === "undefined") {
+    return "undefined";
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    const sanitized = sanitizeLogText(value);
+    return QUOTED_VALUE_PATTERN.test(sanitized)
+      ? `"${sanitized.replaceAll('"', '\\"')}"`
+      : sanitized;
+  }
+
+  return String(value);
+}
+
+function flattenMetaEntries(
+  key: string,
+  value: unknown,
+  entries: string[],
+  depth: number
+) {
+  if (depth >= MAX_META_DEPTH) {
+    entries.push(`${key}=<depth-limit>`);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      entries.push(`${key}=[]`);
+      return;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      flattenMetaEntries(`${key}[${index}]`, value[index], entries, depth + 1);
+    }
+    return;
+  }
+
+  if (value && typeof value === "object") {
+    const objectEntries = Object.entries(value as Record<string, unknown>);
+    if (objectEntries.length === 0) {
+      entries.push(`${key}={}`);
+      return;
+    }
+    for (const [childKey, childValue] of objectEntries) {
+      flattenMetaEntries(`${key}.${childKey}`, childValue, entries, depth + 1);
+    }
+    return;
+  }
+
+  entries.push(`${key}=${formatLogValue(value)}`);
+}
+
+function formatMeta(meta: LogMeta | undefined) {
+  if (!meta) {
+    return "";
+  }
+
+  const normalizedMeta = safeSerialize(meta);
+  if (!normalizedMeta || typeof normalizedMeta !== "object") {
+    return "";
+  }
+
+  const entries: string[] = [];
+  for (const [key, value] of Object.entries(
+    normalizedMeta as Record<string, unknown>
+  )) {
+    flattenMetaEntries(key, value, entries, 0);
+  }
+
+  return entries.join(" ");
+}
+
 export function getLogDirectoryPath() {
   return path.join(getDataRootPath(), "logs");
 }
@@ -98,21 +181,14 @@ class AppLogger {
   }
 
   private write(level: LogLevel, message: string, meta?: LogMeta) {
-    const record: LogRecord = {
-      ts: new Date().toISOString(),
-      level,
-      message,
-      processType: currentProcessType(),
-    };
+    const timestamp = formatTimestamp(new Date());
+    const levelLabel = level.toUpperCase();
+    const processType = currentProcessType();
+    const metaText = formatMeta(meta);
+    const baseLine = `${timestamp} [${levelLabel}] [${processType}] ${sanitizeLogText(message)}`;
+    const line = metaText ? `${baseLine} | ${metaText}` : baseLine;
 
-    if (meta) {
-      const serializedMeta = safeSerialize(meta);
-      if (serializedMeta && typeof serializedMeta === "object") {
-        record.meta = serializedMeta as LogMeta;
-      }
-    }
-
-    this.enqueueWrite(JSON.stringify(record));
+    this.enqueueWrite(line);
   }
 
   debug(message: string, meta?: LogMeta) {

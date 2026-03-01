@@ -1,7 +1,13 @@
-import { openExternalLink, pickAudioFile, saveRecordedAudio } from "./handlers";
+import {
+  openExternalLink,
+  pickAudioFile,
+  pickLocalFiles,
+  saveRecordedAudio,
+} from "./handlers";
 
 export const shell = {
   openExternalLink,
   pickAudioFile,
+  pickLocalFiles,
   saveRecordedAudio,
 };
