@@ -55,7 +55,7 @@ function WindowButtons() {
     "no-drag flex h-9 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-muted/55 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
 
   return (
-    <div className="no-drag flex border-border/60 border-l">
+    <div className="no-drag flex">
       <button
         aria-label="最小化窗口"
         className={buttonClass}
