@@ -24,3 +24,10 @@ export function synthesizePreviewVoice(input: {
 export function getCachedPreviewVoice(voiceId: string) {
   return ipc.client.voiceClone.getCachedPreviewVoice({ voiceId });
 }
+
+export function updateVoiceDisplayName(input: {
+  voiceId: string;
+  displayName: string;
+}) {
+  return ipc.client.voiceClone.getVoice(input);
+}

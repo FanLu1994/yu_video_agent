@@ -23,6 +23,13 @@ export const listVoices = os.handler(() => {
 
 export const getVoice = os.input(voiceByIdInputSchema).handler(({ input }) => {
   return runLoggedIpcHandler("voiceClone.getVoice", input, () => {
+    if (input.displayName) {
+      return services.voiceCloneService.updateVoiceDisplayName(
+        input.voiceId,
+        input.displayName
+      );
+    }
+
     return services.voiceCloneService.getVoice(input.voiceId);
   });
 });

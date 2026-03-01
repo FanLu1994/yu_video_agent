@@ -13,6 +13,7 @@ import {
   getCachedPreviewVoice,
   listVoiceProfiles,
   synthesizePreviewVoice,
+  updateVoiceDisplayName,
 } from "@/actions/voice-clone";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -32,15 +33,16 @@ type VoiceProfileRow = Awaited<ReturnType<typeof listVoiceProfiles>>[number];
 type VoicesTab = "create" | "archive";
 
 interface VoicePreviewState {
-  text: string;
-  previewUrl: string | null;
-  isLoading: boolean;
   error: string | null;
+  isLoading: boolean;
+  previewUrl: string | null;
+  text: string;
 }
 
 const DEFAULT_SAMPLE_TEXT =
   "这是用于音色克隆试听的示例文本。系统会用它生成一段试听语音。";
 const EMPTY_VTT_TRACK = "data:text/vtt;charset=utf-8,WEBVTT%0A%0A";
+const VOICE_NAME_OVERRIDES_STORAGE_KEY = "voice-name-overrides";
 
 interface NormalizedVoiceCloneInput {
   cloneAudioPath: string;
@@ -50,6 +52,38 @@ interface NormalizedVoiceCloneInput {
   providerId: string;
   sampleText: string;
   voiceId: string;
+}
+
+function loadVoiceNameOverrides() {
+  try {
+    const raw = localStorage.getItem(VOICE_NAME_OVERRIDES_STORAGE_KEY);
+    if (!raw) {
+      return {} as Record<string, string>;
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {} as Record<string, string>;
+    }
+
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && value.trim()) {
+        normalized[key] = value.trim();
+      }
+    }
+
+    return normalized;
+  } catch {
+    return {} as Record<string, string>;
+  }
+}
+
+function saveVoiceNameOverrides(overrides: Record<string, string>) {
+  localStorage.setItem(
+    VOICE_NAME_OVERRIDES_STORAGE_KEY,
+    JSON.stringify(overrides)
+  );
 }
 
 function buildAutoVoiceId() {
@@ -116,6 +150,13 @@ function VoiceClonePage() {
   const [latestPreview, setLatestPreview] = useState<VoiceProfileRow | null>(
     null
   );
+  const [voiceNameEdits, setVoiceNameEdits] = useState<Record<string, string>>(
+    {}
+  );
+  const [renamingVoiceId, setRenamingVoiceId] = useState<string | null>(null);
+  const [voiceRenameErrors, setVoiceRenameErrors] = useState<
+    Record<string, string | null>
+  >({});
   const [isPending, startTransition] = useTransition();
 
   // Per-voice preview state
@@ -153,13 +194,31 @@ function VoiceClonePage() {
       listProviders(),
       listVoiceProfiles(),
     ]);
+    const nameOverrides = loadVoiceNameOverrides();
+    const mergedVoiceRows = voiceRows.map((voice) => ({
+      ...voice,
+      displayName:
+        nameOverrides[voice.voiceId]?.trim() ||
+        voice.displayName ||
+        voice.voiceId,
+    }));
+
     setProviders(providerRows);
-    setVoices(voiceRows);
+    setVoices(mergedVoiceRows);
+    setVoiceNameEdits(
+      Object.fromEntries(
+        mergedVoiceRows.map((voice) => [
+          voice.voiceId,
+          voice.displayName || voice.voiceId,
+        ])
+      )
+    );
+    setVoiceRenameErrors({});
 
     // 加载缓存的试听信息
     const cachedPreviews: Record<string, VoicePreviewState> = {};
     await Promise.all(
-      voiceRows.map(async (voice) => {
+      mergedVoiceRows.map(async (voice) => {
         try {
           const cached = await getCachedPreviewVoice(voice.voiceId);
           if (cached) {
@@ -287,7 +346,7 @@ function VoiceClonePage() {
 
   async function onGeneratePreview(voiceId: string) {
     const state = voicePreviewStates[voiceId];
-    if (!state || !state.text.trim()) {
+    if (!state?.text.trim()) {
       setVoicePreviewStates((prev) => ({
         ...prev,
         [voiceId]: {
@@ -342,6 +401,67 @@ function VoiceClonePage() {
         error: null,
       },
     }));
+  }
+
+  async function onSaveVoiceDisplayName(voiceId: string) {
+    const displayName = (voiceNameEdits[voiceId] || "").trim();
+    if (!displayName) {
+      setVoiceRenameErrors((prev) => ({
+        ...prev,
+        [voiceId]: "名称不能为空",
+      }));
+      return;
+    }
+
+    setVoiceRenameErrors((prev) => ({
+      ...prev,
+      [voiceId]: null,
+    }));
+    setRenamingVoiceId(voiceId);
+
+    try {
+      const updated = await updateVoiceDisplayName({
+        voiceId,
+        displayName,
+      });
+
+      const nextOverrides = {
+        ...loadVoiceNameOverrides(),
+        [voiceId]: displayName,
+      };
+      saveVoiceNameOverrides(nextOverrides);
+
+      if (updated?.displayName?.trim() === displayName) {
+        setMessage(`音色名称已更新：${displayName}`);
+      } else {
+        setMessage(
+          "音色名称已本地保存。若当前会话仍未同步到档案，请重启应用后再保存一次。"
+        );
+      }
+      await refreshAll();
+    } catch (error) {
+      const rawMessage =
+        error instanceof Error ? error.message : "保存失败";
+
+      if (/not\s*found/i.test(rawMessage)) {
+        const nextOverrides = {
+          ...loadVoiceNameOverrides(),
+          [voiceId]: displayName,
+        };
+        saveVoiceNameOverrides(nextOverrides);
+        setMessage(
+          "主进程尚未加载最新 IPC 路由，名称已本地保存。请重启应用后再保存一次以写入档案。"
+        );
+        await refreshAll();
+      } else {
+        setVoiceRenameErrors((prev) => ({
+          ...prev,
+          [voiceId]: rawMessage,
+        }));
+      }
+    } finally {
+      setRenamingVoiceId(null);
+    }
   }
 
   return (
@@ -575,7 +695,10 @@ function VoiceClonePage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate font-medium text-sm">
-                            {voice.voiceId}
+                            {voice.displayName}
+                          </p>
+                          <p className="font-mono text-muted-foreground text-xs">
+                            ID：{voice.voiceId}
                           </p>
                           <p className="text-muted-foreground text-xs">
                             服务：{voice.providerId} · 状态：{voice.status}
@@ -595,7 +718,52 @@ function VoiceClonePage() {
                           </a>
                         ) : null}
                       </div>
-                      <p className="mt-2 text-muted-foreground text-xs">源音频</p>
+
+                      <div className="mt-2">
+                        <p className="text-muted-foreground text-xs">音色名称</p>
+                        <div className="mt-1 flex gap-2">
+                          <input
+                            className="field-input"
+                            onChange={(event) => {
+                              setVoiceNameEdits((prev) => ({
+                                ...prev,
+                                [voice.voiceId]: event.target.value,
+                              }));
+                              setVoiceRenameErrors((prev) => ({
+                                ...prev,
+                                [voice.voiceId]: null,
+                              }));
+                            }}
+                            placeholder="输入音色名称"
+                            value={voiceNameEdits[voice.voiceId] ?? voice.displayName}
+                          />
+                          <Button
+                            disabled={
+                              isPending ||
+                              renamingVoiceId === voice.voiceId ||
+                              !(voiceNameEdits[voice.voiceId] ?? "").trim() ||
+                              (voiceNameEdits[voice.voiceId] ?? "").trim() ===
+                                voice.displayName
+                            }
+                            onClick={() => onSaveVoiceDisplayName(voice.voiceId)}
+                            type="button"
+                            variant="outline"
+                          >
+                            {renamingVoiceId === voice.voiceId
+                              ? "保存中..."
+                              : "保存名称"}
+                          </Button>
+                        </div>
+                        {voiceRenameErrors[voice.voiceId] ? (
+                          <p className="mt-1 text-destructive text-xs">
+                            {voiceRenameErrors[voice.voiceId]}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <p className="mt-2 text-muted-foreground text-xs">
+                        源音频
+                      </p>
                       <code className="mono-hint mt-1 block break-all">
                         {voice.sourceAudioPath}
                       </code>
@@ -628,7 +796,9 @@ function VoiceClonePage() {
                               type="button"
                               variant="outline"
                             >
-                              {previewState?.isLoading ? "生成中..." : "生成试听"}
+                              {previewState?.isLoading
+                                ? "生成中..."
+                                : "生成试听"}
                             </Button>
                           </div>
                         </label>
