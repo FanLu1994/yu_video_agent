@@ -33,8 +33,12 @@ import {
   loadVoiceNameOverrides,
   resolveVoiceDisplayName,
 } from "@/actions/voice-display-name";
-import { Button } from "@/components/ui/button";
+import {
+  getLastSelectedVoiceId,
+  saveLastSelectedVoiceId,
+} from "@/actions/voice-selection";
 import { RemotionBestPracticesPanel } from "@/components/remotion-best-practices-panel";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -197,14 +201,46 @@ function HomePage() {
     });
   }, [agentProviderOptions, enabledProviders, voiceProviderOptions]);
 
+  useEffect(() => {
+    if (voices.length === 0) {
+      return;
+    }
+
+    setForm((prev) => {
+      if (
+        prev.voiceId &&
+        voices.some((voice) => voice.voiceId === prev.voiceId)
+      ) {
+        return prev;
+      }
+
+      const lastSelectedVoiceId = getLastSelectedVoiceId();
+      const fallbackVoiceId =
+        lastSelectedVoiceId &&
+        voices.some((voice) => voice.voiceId === lastSelectedVoiceId)
+          ? lastSelectedVoiceId
+          : voices[0]?.voiceId || "";
+
+      if (!fallbackVoiceId || prev.voiceId === fallbackVoiceId) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        voiceId: fallbackVoiceId,
+      };
+    });
+  }, [voices]);
+
   const refresh = useCallback(async () => {
-    const [providerRows, config, voiceRows, jobRows, summary] = await Promise.all([
-      listProviders(),
-      getAgentConfig(),
-      listVoiceProfiles(),
-      listAgentJobs(),
-      getAgentQueueSummary(),
-    ]);
+    const [providerRows, config, voiceRows, jobRows, summary] =
+      await Promise.all([
+        listProviders(),
+        getAgentConfig(),
+        listVoiceProfiles(),
+        listAgentJobs(),
+        getAgentQueueSummary(),
+      ]);
     const voiceNameOverrides = loadVoiceNameOverrides();
     const mergedVoiceRows = voiceRows.map((voice) => ({
       ...voice,
@@ -638,12 +674,17 @@ function HomePage() {
               <span>音色（可选）</span>
               <select
                 className="field-input"
-                onChange={(event) =>
+                onChange={(event) => {
+                  const nextVoiceId = event.target.value;
+                  if (nextVoiceId) {
+                    saveLastSelectedVoiceId(nextVoiceId);
+                  }
+
                   setForm((prev) => ({
                     ...prev,
-                    voiceId: event.target.value,
-                  }))
-                }
+                    voiceId: nextVoiceId,
+                  }));
+                }}
                 value={form.voiceId}
               >
                 <option value="">不使用音色</option>
@@ -747,7 +788,12 @@ function HomePage() {
 
             <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-muted-foreground text-xs">
               Agent 的 Prompt / Runtime / Remotion 参数已迁移到侧边栏的
-              <Button asChild className="ml-1 h-6 px-2 text-xs" size="sm" variant="ghost">
+              <Button
+                asChild
+                className="ml-1 h-6 px-2 text-xs"
+                size="sm"
+                variant="ghost"
+              >
                 <Link to="/agent-config">Agent 配置</Link>
               </Button>
               页面统一维护。
@@ -894,7 +940,8 @@ function HomePage() {
               Remotion Best Practices（内嵌）
             </DialogTitle>
             <DialogDescription>
-              内容来自 remotion-best-practices skill，已内置到应用用于生成视频时参考。
+              内容来自 remotion-best-practices
+              skill，已内置到应用用于生成视频时参考。
             </DialogDescription>
           </DialogHeader>
           <RemotionBestPracticesPanel />

@@ -10,12 +10,13 @@ const secretVault = new SecretVault();
 const providerConfigService = new ProviderConfigService(secretVault);
 const agentConfigService = new AgentConfigService();
 const remotionRenderService = new RemotionRenderService();
+const voiceCloneService = new VoiceCloneService(providerConfigService);
 const agentRuntimeService = new AgentRuntimeService(
   providerConfigService,
-  remotionRenderService
+  remotionRenderService,
+  voiceCloneService
 );
 const agentJobService = new AgentJobService(agentRuntimeService);
-const voiceCloneService = new VoiceCloneService(providerConfigService);
 
 export const services = {
   providerConfigService,

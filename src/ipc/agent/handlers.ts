@@ -29,6 +29,14 @@ export const getJobEvents = os
     });
   });
 
+export const getJobStageOutputs = os
+  .input(jobByIdInputSchema)
+  .handler(({ input }) => {
+    return runLoggedIpcHandler("agent.getJobStageOutputs", input, () => {
+      return services.agentJobService.getJobStageOutputs(input.jobId);
+    });
+  });
+
 export const cancelJob = os.input(jobByIdInputSchema).handler(({ input }) => {
   return runLoggedIpcHandler("agent.cancelJob", input, () => {
     return services.agentJobService.cancelJob(input.jobId);

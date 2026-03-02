@@ -14,6 +14,26 @@ const ERROR_MESSAGE_KEY = "message";
 const MAX_SERIALIZED_LENGTH = 16_000;
 const MAX_META_DEPTH = 4;
 const QUOTED_VALUE_PATTERN = /\s|=|"/;
+const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40,
+};
+
+function resolveMinLogLevel(): LogLevel {
+  const raw = (
+    process.env.APP_LOG_LEVEL ||
+    process.env.LOG_LEVEL ||
+    "info"
+  ).toLowerCase();
+
+  if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") {
+    return raw;
+  }
+
+  return "info";
+}
 
 function normalizeUnknown(value: unknown): unknown {
   if (value instanceof Error) {
@@ -167,6 +187,7 @@ export function getCurrentLogFilePath() {
 
 class AppLogger {
   private writeQueue: Promise<void> = Promise.resolve();
+  private readonly minLogLevel = resolveMinLogLevel();
 
   private enqueueWrite(line: string) {
     this.writeQueue = this.writeQueue
@@ -181,6 +202,10 @@ class AppLogger {
   }
 
   private write(level: LogLevel, message: string, meta?: LogMeta) {
+    if (LOG_LEVEL_PRIORITY[level] < LOG_LEVEL_PRIORITY[this.minLogLevel]) {
+      return;
+    }
+
     const timestamp = formatTimestamp(new Date());
     const levelLabel = level.toUpperCase();
     const processType = currentProcessType();

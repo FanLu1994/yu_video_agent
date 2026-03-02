@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   AgentRemotionConfig,
   JobArtifacts,
@@ -7,10 +8,11 @@ import type {
   RunAgentJobRequest,
   Stage,
 } from "@/domain/agent/types";
+import type { AgentCompositionInput } from "@/remotion/Root";
 import { buildPiModel } from "@/services/provider/pi-model";
 import type { ProviderConfigService } from "@/services/provider/provider-config.service";
 import { getDataRootPath } from "@/services/storage/runtime-paths";
-import type { AgentCompositionInput } from "@/remotion/Root";
+import type { VoiceCloneService } from "../voice/voice-clone.service";
 import type { RemotionRenderService } from "../remotion/remotion-render.service";
 
 export interface RuntimeStageUpdate {
@@ -27,6 +29,7 @@ export interface RuntimePipelineInput {
 
 export interface RuntimePipelineResult {
   artifacts: JobArtifacts;
+  audioPath?: string;
   warnings: JobWarning[];
 }
 
@@ -75,7 +78,8 @@ export class AgentRuntimeService {
 
   constructor(
     private readonly providers: ProviderConfigService,
-    private readonly remotionRenderer: RemotionRenderService
+    private readonly remotionRenderer: RemotionRenderService,
+    private readonly voiceCloneService: VoiceCloneService
   ) {}
 
   private getOutputDir(jobId: string) {
@@ -130,10 +134,7 @@ export class AgentRuntimeService {
   }
 
   private buildFallbackTopic(request: RunAgentJobRequest) {
-    const base =
-      request.localFiles[0] ||
-      request.articleUrls[0] ||
-      "输入资料";
+    const base = request.localFiles[0] || request.articleUrls[0] || "输入资料";
     const sanitized = base.replace(/\\/g, "/").split("/").at(-1) || "主题";
     return `基于${sanitized}的视频解读`;
   }
@@ -148,9 +149,7 @@ export class AgentRuntimeService {
       "我们先快速梳理背景与核心问题。",
       "随后对关键信息进行结构化拆解。",
       "最后给出可执行的总结与下一步建议。",
-      ...(sourceTips.length > 0
-        ? [`参考来源：${sourceTips.join("；")}`]
-        : []),
+      ...(sourceTips.length > 0 ? [`参考来源：${sourceTips.join("；")}`] : []),
     ].join("\n");
   }
 
@@ -162,14 +161,20 @@ export class AgentRuntimeService {
       accentColor: config?.accentColor ?? preset.accentColor,
       backgroundStartColor:
         config?.backgroundStartColor ?? preset.backgroundStartColor,
-      backgroundEndColor: config?.backgroundEndColor ?? preset.backgroundEndColor,
+      backgroundEndColor:
+        config?.backgroundEndColor ?? preset.backgroundEndColor,
     };
   }
 
-  private resolveTargetDurationSec(request: RunAgentJobRequest, lineCount: number) {
+  private resolveTargetDurationSec(
+    request: RunAgentJobRequest,
+    lineCount: number
+  ) {
     const explicit = request.videoSpec
       ? Math.round(
-          (request.videoSpec.durationSecMin + request.videoSpec.durationSecMax) / 2
+          (request.videoSpec.durationSecMin +
+            request.videoSpec.durationSecMax) /
+            2
         )
       : undefined;
     const byLines = Math.max(12, lineCount * 4);
@@ -201,7 +206,7 @@ export class AgentRuntimeService {
     for (const filePath of request.localFiles.slice(0, limit)) {
       try {
         const raw = await readFile(filePath, "utf-8");
-        const cleaned = this.normalizeWhitespace(raw).slice(0, 5_000);
+        const cleaned = this.normalizeWhitespace(raw).slice(0, 5000);
         if (!cleaned) {
           continue;
         }
@@ -229,7 +234,7 @@ export class AgentRuntimeService {
           signal: controller.signal,
         }).finally(() => clearTimeout(timer));
         const html = await response.text();
-        const text = this.stripHtml(html).slice(0, 5_000);
+        const text = this.stripHtml(html).slice(0, 5000);
         if (!text) {
           continue;
         }
@@ -257,7 +262,7 @@ export class AgentRuntimeService {
     userPrompt: string
   ): Promise<string | undefined> {
     const provider = await this.providers.getProviderById(request.providerId);
-    if (!provider || !provider.enabled) {
+    if (!(provider && provider.enabled)) {
       return undefined;
     }
 
@@ -339,6 +344,7 @@ export class AgentRuntimeService {
     const outputDir = this.getOutputDir(jobId);
     const researchDir = path.join(outputDir, "research");
     const scriptDir = path.join(outputDir, "script");
+    const stagesDir = path.join(outputDir, "stages");
     const timelineDir = path.join(outputDir, "timeline");
     const logsDir = path.join(outputDir, "logs");
     const pipelineLogPath = path.join(logsDir, "pipeline.log");
@@ -346,9 +352,32 @@ export class AgentRuntimeService {
     await Promise.all([
       mkdir(researchDir, { recursive: true }),
       mkdir(scriptDir, { recursive: true }),
+      mkdir(stagesDir, { recursive: true }),
       mkdir(timelineDir, { recursive: true }),
       mkdir(logsDir, { recursive: true }),
     ]);
+
+    const writeStageOutput = async (
+      stage: Stage,
+      payload: Record<string, unknown>
+    ) => {
+      const outputPath = path.join(stagesDir, `${stage}.json`);
+      await writeFile(
+        outputPath,
+        JSON.stringify(
+          {
+            jobId,
+            stage,
+            generatedAt: new Date().toISOString(),
+            ...payload,
+          },
+          null,
+          2
+        ),
+        "utf-8"
+      );
+      return outputPath;
+    };
 
     const emit = async (
       stage: Stage,
@@ -373,11 +402,17 @@ export class AgentRuntimeService {
       request.runtimeConfig?.maxResearchSources ?? 6,
       pipelineLogPath
     );
-    await writeFile(
-      path.join(researchDir, "sources.json"),
-      JSON.stringify(sources, null, 2),
-      "utf-8"
-    );
+    const sourcesPath = path.join(researchDir, "sources.json");
+    await writeFile(sourcesPath, JSON.stringify(sources, null, 2), "utf-8");
+    await writeStageOutput("ingest", {
+      progress: 8,
+      sourceCount: sources.length,
+      sourcesPath,
+      sources: sources.map((item) => ({
+        type: item.type,
+        source: item.source,
+      })),
+    });
 
     const mergedSourceText = sources
       .map((item, index) => {
@@ -389,7 +424,8 @@ export class AgentRuntimeService {
 
     const topicPrompt = request.prompts?.topicPrompt ?? DEFAULT_TOPIC_PROMPT;
     const topicSourceText =
-      mergedSourceText || "未读取到可用输入资料，请仅根据用户任务信息生成主题。";
+      mergedSourceText ||
+      "未读取到可用输入资料，请仅根据用户任务信息生成主题。";
     let topic: string;
     try {
       topic =
@@ -409,19 +445,31 @@ export class AgentRuntimeService {
     if (!topic) {
       topic = this.buildFallbackTopic(request);
     }
+    await writeStageOutput("topic", {
+      progress: 18,
+      topic,
+      sourceCount: sources.length,
+      prompt: topicPrompt,
+    });
 
     await emit("research", 30, "researchTool", `Topic=${topic}`);
 
+    const researchSummaryPath = path.join(researchDir, "summary.json");
     const researchNotes = {
       topic,
       sourceCount: sources.length,
       generatedAt: new Date().toISOString(),
     };
     await writeFile(
-      path.join(researchDir, "summary.json"),
+      researchSummaryPath,
       JSON.stringify(researchNotes, null, 2),
       "utf-8"
     );
+    await writeStageOutput("research", {
+      progress: 30,
+      summaryPath: researchSummaryPath,
+      summary: researchNotes,
+    });
 
     await emit("script", 50, "scriptTool", "Generating script.");
 
@@ -450,12 +498,14 @@ export class AgentRuntimeService {
 
     const normalizedScript = scriptText.trim();
     const scriptPath = path.join(scriptDir, "script.md");
-    await writeFile(
-      scriptPath,
-      `# ${topic}\n\n${normalizedScript}\n`,
-      "utf-8"
-    );
+    await writeFile(scriptPath, `# ${topic}\n\n${normalizedScript}\n`, "utf-8");
     const scriptLines = this.splitIntoScriptLines(normalizedScript);
+    await writeStageOutput("script", {
+      progress: 50,
+      scriptPath,
+      lineCount: scriptLines.length,
+      topic,
+    });
 
     await emit(
       "voice_clone",
@@ -465,6 +515,49 @@ export class AgentRuntimeService {
         ? `Voice clone selected voiceId=${request.voiceId}`
         : "Voice clone skipped (no voiceId)."
     );
+
+    let generatedAudioPath: string | undefined;
+    if (request.voiceId) {
+      try {
+        const scriptText = scriptLines.join("\n");
+        const { previewAudioUrl } =
+          await this.voiceCloneService.synthesizePreviewVoice(
+            request.voiceId,
+            scriptText
+          );
+        const audioDir = path.join(outputDir, "audio");
+        await mkdir(audioDir, { recursive: true });
+        const previewAudioPath = fileURLToPath(previewAudioUrl);
+        const ext = path.extname(previewAudioPath).trim() || ".mp3";
+        const audioFileName = `${request.voiceId}_audio${ext}`;
+        generatedAudioPath = path.join(audioDir, audioFileName);
+        const { copyFile } = await import("node:fs/promises");
+        await copyFile(previewAudioPath, generatedAudioPath);
+        await this.appendPipelineLog(
+          pipelineLogPath,
+          `voice_clone.generated path=${generatedAudioPath}`
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.appendPipelineLog(
+          pipelineLogPath,
+          `voice_clone.failed error=${message}`
+        );
+        warnings.push({
+          code: "VOICE_CLONE_FAILED",
+          message: `Voice synthesis failed: ${message}`,
+        });
+      }
+    }
+
+    await writeStageOutput("voice_clone", {
+      progress: 62,
+      status: request.voiceId ? "selected" : "skipped",
+      voiceId: request.voiceId ?? null,
+      voiceProviderId: request.voiceProviderId ?? null,
+      voiceModel: request.voiceModel ?? null,
+      audioPath: generatedAudioPath,
+    });
 
     await emit("compose", 74, "composeRenderTool", "Preparing Remotion props.");
 
@@ -483,7 +576,25 @@ export class AgentRuntimeService {
       fps: request.remotionConfig?.fps ?? 30,
       width: request.remotionConfig?.width ?? 1920,
       height: request.remotionConfig?.height ?? 1080,
+      audioPath: generatedAudioPath,
     };
+    const compositionInputPath = path.join(
+      timelineDir,
+      "composition-input.json"
+    );
+    await writeFile(
+      compositionInputPath,
+      JSON.stringify(remotionInputProps, null, 2),
+      "utf-8"
+    );
+    await writeStageOutput("compose", {
+      progress: 74,
+      compositionInputPath,
+      durationSec: remotionInputProps.durationSec,
+      fps: remotionInputProps.fps,
+      width: remotionInputProps.width,
+      height: remotionInputProps.height,
+    });
 
     const timeline = this.createTimeline(scriptLines);
     const timelinePath = path.join(timelineDir, "timestamps.json");
@@ -503,6 +614,11 @@ export class AgentRuntimeService {
         }
       },
     });
+    await writeStageOutput("render", {
+      progress: 84,
+      videoPath: renderResult.videoPath,
+      outputDir,
+    });
 
     await emit("package", 96, "packageTool", "Creating manifest.");
     const manifestPath = path.join(outputDir, "manifest.json");
@@ -519,20 +635,32 @@ export class AgentRuntimeService {
         scriptPath,
         timelinePath,
         pipelineLogPath,
+        audioPath: generatedAudioPath,
       },
       warnings,
     };
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
     await this.appendPipelineLog(pipelineLogPath, "Pipeline completed.");
     await emit("package", 100, "packageTool", "Manifest created.");
+    await writeStageOutput("package", {
+      progress: 100,
+      manifestPath,
+      timelinePath,
+      pipelineLogPath,
+      warningCount: warnings.length,
+    });
 
     return {
       warnings,
+      audioPath: generatedAudioPath,
       artifacts: {
+        audioPath: generatedAudioPath,
+        compositionInputPath,
         outputDir,
         manifestPath,
         videoPath: renderResult.videoPath,
         scriptPath,
+        stageOutputDir: stagesDir,
         timelinePath,
         pipelineLogPath,
       },

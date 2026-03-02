@@ -93,10 +93,13 @@ export interface RunAgentJobRequest {
 }
 
 export interface JobArtifacts {
+  audioPath?: string;
+  compositionInputPath?: string;
   manifestPath?: string;
   outputDir?: string;
   pipelineLogPath?: string;
   scriptPath?: string;
+  stageOutputDir?: string;
   timelinePath?: string;
   videoPath?: string;
 }
@@ -132,4 +135,20 @@ export interface JobEvent {
     | "job.failed"
     | "job.completed"
     | "job.cancelled";
+}
+
+export interface JobStageOutputRecord {
+  audioPath?: string;
+  content: string;
+  exists: boolean;
+  outputPath: string;
+  source: "fallback" | "stage_report";
+  stage: Stage;
+  title: string;
+}
+
+export interface JobStageOutputs {
+  jobId: string;
+  outputDir: string;
+  steps: JobStageOutputRecord[];
 }

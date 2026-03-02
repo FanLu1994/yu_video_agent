@@ -15,6 +15,7 @@ export const AgentNarrationSchema = z.object({
   scriptLines: z.array(z.string().min(1)).min(1),
   subtitle: z.string().optional(),
   title: z.string().min(1),
+  audioPath: z.string().optional(),
 });
 
 export type AgentNarrationProps = z.infer<typeof AgentNarrationSchema>;

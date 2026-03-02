@@ -18,6 +18,10 @@ export function getAgentJobEvents(jobId: string) {
   return ipc.client.agent.getJobEvents({ jobId });
 }
 
+export function getAgentJobStageOutputs(jobId: string) {
+  return ipc.client.agent.getJobStageOutputs({ jobId });
+}
+
 export function cancelAgentJob(jobId: string) {
   return ipc.client.agent.cancelJob({ jobId });
 }
