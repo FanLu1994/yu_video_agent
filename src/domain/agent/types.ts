@@ -85,6 +85,7 @@ export interface RunAgentJobRequest {
   prompts?: AgentPromptConfig;
   providerId: string;
   remotionConfig?: AgentRemotionConfig;
+  resumeFromStage?: Stage;
   runtimeConfig?: AgentRuntimeConfig;
   videoSpec?: VideoSpec;
   voiceId?: string;

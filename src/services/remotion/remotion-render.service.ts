@@ -208,6 +208,8 @@ export class RemotionRenderService {
       import("@remotion/bundler"),
       import("@remotion/renderer"),
     ]);
+    console.log(`[REMOTION] Starting render for job ${jobId}`);
+    console.log(`[REMOTION] Input props:`, inputProps);
 
     const entryPoint = await this.resolveEntryPoint();
     const videoPath = path.join(outputDir, "final", "video.mp4");
@@ -215,19 +217,26 @@ export class RemotionRenderService {
     const binariesDirectory = path.join(dataRoot, "remotion-binaries");
     await mkdir(path.dirname(videoPath), { recursive: true });
 
+    console.log(`[REMOTION] Entry point: ${entryPoint}`);
+    console.log(`[REMOTION] Output path: ${videoPath}`);
+
     await this.ensureRuntimeBinaries(renderer, binariesDirectory);
     const browserExecutable = await this.ensureManagedBrowser(
       renderer,
       dataRoot
     );
+    console.log(`[REMOTION] Browser executable: ${browserExecutable}`);
 
+    console.log(`[REMOTION] Starting bundle...`);
     const serveUrl = await bundle({
       entryPoint,
       onProgress: () => {
         // Keep bundling progress internal. Render progress is surfaced to users.
       },
     });
+    console.log(`[REMOTION] Bundle completed. serveUrl: ${serveUrl}`);
 
+    console.log(`[REMOTION] Selecting composition...`);
     const composition = await renderer.selectComposition({
       id: DEFAULT_COMPOSITION_ID,
       serveUrl,
@@ -237,7 +246,9 @@ export class RemotionRenderService {
       binariesDirectory,
       browserExecutable,
     });
+    console.log(`[REMOTION] Composition selected. id: ${composition.id}, width: ${composition.width}, height: ${composition.height}`);
 
+    console.log(`[REMOTION] Starting renderMedia...`);
     await renderer.renderMedia({
       codec: "h264",
       composition,
@@ -253,9 +264,11 @@ export class RemotionRenderService {
           0,
           Math.min(100, Math.round(progress.progress * 100))
         );
+        console.log(`[REMOTION] Render progress: ${percent}% (frame: ${progress.frame}/${progress.framesInVideo})`);
         void onProgress?.(percent);
       },
     });
+    console.log(`[REMOTION] RenderMedia completed. Video saved to: ${videoPath}`);
 
     return {
       compositionId: DEFAULT_COMPOSITION_ID,

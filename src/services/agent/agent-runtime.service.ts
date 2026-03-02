@@ -25,6 +25,7 @@ export interface RuntimePipelineInput {
   jobId: string;
   onStageUpdate: (update: RuntimeStageUpdate) => Promise<void>;
   request: RunAgentJobRequest;
+  resumeFromStage?: Stage;
 }
 
 export interface RuntimePipelineResult {
@@ -337,9 +338,45 @@ export class AgentRuntimeService {
   async runPipeline(
     input: RuntimePipelineInput
   ): Promise<RuntimePipelineResult> {
-    const { jobId, onStageUpdate, request } = input;
+    const { jobId, onStageUpdate, request, resumeFromStage } = input;
+    console.log(`[AGENT] Pipeline started for job ${jobId}`);
+    console.log(`[AGENT] Resume from stage: ${resumeFromStage ?? "从头开始"}`);
+    console.log(`[AGENT] Request:`, {
+      providerId: request.providerId,
+      model: request.model,
+      voiceId: request.voiceId,
+      voiceProviderId: request.voiceProviderId,
+      voiceModel: request.voiceModel,
+      articleUrls: request.articleUrls,
+      localFiles: request.localFiles,
+    });
     await this.initialize();
-    const warnings: JobWarning[] = [];
+
+    const stagesOrder: Stage[] = [
+      "ingest",
+      "topic",
+      "research",
+      "script",
+      "voice_clone",
+      "compose",
+      "render",
+      "package",
+    ];
+
+    const resumeIndex = resumeFromStage ? stagesOrder.indexOf(resumeFromStage) : -1;
+    console.log(`[AGENT] Resume stage index: ${resumeIndex} (-1 means start from beginning)`);
+
+    const shouldSkipStage = async (stage: Stage): Promise<boolean> => {
+      if (resumeIndex === -1) {
+        return false;
+      }
+      const stageIndex = stagesOrder.indexOf(stage);
+      if (stageIndex < resumeIndex) {
+        console.log(`[AGENT] Skipping stage ${stage} (already completed)`);
+        return true;
+      }
+      return false;
+    };
 
     const outputDir = this.getOutputDir(jobId);
     const researchDir = path.join(outputDir, "research");
@@ -397,13 +434,30 @@ export class AgentRuntimeService {
 
     await emit("ingest", 8, "ingestTool", "Pipeline started.");
 
-    const sources = await this.ingestSources(
-      request,
-      request.runtimeConfig?.maxResearchSources ?? 6,
-      pipelineLogPath
-    );
+    let sources: IngestedSource[];
     const sourcesPath = path.join(researchDir, "sources.json");
-    await writeFile(sourcesPath, JSON.stringify(sources, null, 2), "utf-8");
+    if (await shouldSkipStage("ingest")) {
+      try {
+        const sourcesData = await readFile(sourcesPath, "utf-8");
+        sources = JSON.parse(sourcesData);
+        console.log(`[AGENT] Loaded cached sources: ${sources.length} items`);
+      } catch {
+        console.log(`[AGENT] Failed to load cached sources, re-running ingest`);
+        sources = await this.ingestSources(
+          request,
+          request.runtimeConfig?.maxResearchSources ?? 6,
+          pipelineLogPath
+        );
+        await writeFile(sourcesPath, JSON.stringify(sources, null, 2), "utf-8");
+      }
+    } else {
+      sources = await this.ingestSources(
+        request,
+        request.runtimeConfig?.maxResearchSources ?? 6,
+        pipelineLogPath
+      );
+      await writeFile(sourcesPath, JSON.stringify(sources, null, 2), "utf-8");
+    }
     await writeStageOutput("ingest", {
       progress: 8,
       sourceCount: sources.length,
@@ -515,24 +569,35 @@ export class AgentRuntimeService {
         ? `Voice clone selected voiceId=${request.voiceId}`
         : "Voice clone skipped (no voiceId)."
     );
+    console.log(`[AGENT] Voice clone stage started. voiceId: ${request.voiceId}`);
 
     let generatedAudioPath: string | undefined;
     if (request.voiceId) {
+      console.log(`[AGENT] Starting voice synthesis for voiceId=${request.voiceId}`);
       try {
         const scriptText = scriptLines.join("\n");
+        console.log(`[AGENT] Script to synthesize:`, scriptText);
         const { previewAudioUrl } =
           await this.voiceCloneService.synthesizePreviewVoice(
             request.voiceId,
             scriptText
           );
+        console.log(`[AGENT] Voice synthesis completed. previewAudioUrl: ${previewAudioUrl}`);
         const audioDir = path.join(outputDir, "audio");
         await mkdir(audioDir, { recursive: true });
         const previewAudioPath = fileURLToPath(previewAudioUrl);
+        console.log(`[AGENT] Converting URL to path: ${previewAudioUrl} -> ${previewAudioPath}`);
         const ext = path.extname(previewAudioPath).trim() || ".mp3";
         const audioFileName = `${request.voiceId}_audio${ext}`;
         generatedAudioPath = path.join(audioDir, audioFileName);
+        console.log(`[AGENT] Copying audio from ${previewAudioPath} to ${generatedAudioPath}`);
         const { copyFile } = await import("node:fs/promises");
         await copyFile(previewAudioPath, generatedAudioPath);
+        console.log(`[AGENT] Audio copied successfully: ${generatedAudioPath}`);
+        await this.appendPipelineLog(
+          pipelineLogPath,
+          `voice_clone.generated path=${generatedAudioPath}`
+        );
         await this.appendPipelineLog(
           pipelineLogPath,
           `voice_clone.generated path=${generatedAudioPath}`
@@ -601,11 +666,18 @@ export class AgentRuntimeService {
     await writeFile(timelinePath, JSON.stringify(timeline, null, 2), "utf-8");
 
     await emit("render", 84, "remotionRenderTool", "Rendering video.");
+    console.log(`[AGENT] Render stage started. inputProps:`, {
+      title: remotionInputProps.title,
+      scriptLines: remotionInputProps.scriptLines.length,
+      durationSec: remotionInputProps.durationSec,
+      audioPath: remotionInputProps.audioPath,
+    });
     const renderResult = await this.remotionRenderer.renderAgentVideo({
       jobId,
       outputDir,
       inputProps: remotionInputProps,
       onProgress: async (percent) => {
+        console.log(`[AGENT] Render progress: ${percent}%`);
         if (percent >= 95) {
           await this.appendPipelineLog(
             pipelineLogPath,
@@ -614,6 +686,7 @@ export class AgentRuntimeService {
         }
       },
     });
+    console.log(`[AGENT] Render completed. videoPath: ${renderResult.videoPath}`);
     await writeStageOutput("render", {
       progress: 84,
       videoPath: renderResult.videoPath,
@@ -649,7 +722,14 @@ export class AgentRuntimeService {
       pipelineLogPath,
       warningCount: warnings.length,
     });
-
+    console.log(`[AGENT] Pipeline completed successfully.`);
+    console.log(`[AGENT] Final artifacts:`, {
+      videoPath: renderResult.videoPath,
+      audioPath: generatedAudioPath,
+      scriptPath,
+      manifestPath,
+      warnings: warnings.length,
+    });
     return {
       warnings,
       audioPath: generatedAudioPath,

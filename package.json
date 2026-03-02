@@ -1,6 +1,6 @@
 {
-  "name": "electron-shadcn",
-  "productName": "electron-shadcn Template",
+  "name": "yu-video-agent",
+  "productName": "yu-video-agent",
   "version": "1.3.2",
   "description": "Electron Forge with shadcn-ui (Vite + Typescript)",
   "main": ".vite/build/main.js",

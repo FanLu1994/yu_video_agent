@@ -30,17 +30,18 @@ const remotionConfigSchema = z.object({
 });
 
 export const createJobInputSchema = z.object({
+  articleUrls: z.array(z.string()),
   localFiles: z.array(z.string()),
-  articleUrls: z.array(z.string().url()),
   providerId: z.string().min(1),
   model: z.string().min(1),
-  voiceProviderId: z.string().min(1).optional(),
-  voiceModel: z.string().min(1).optional(),
-  voiceId: z.string().min(1).optional(),
-  videoSpec: videoSpecSchema.optional(),
   prompts: promptConfigSchema.optional(),
-  runtimeConfig: runtimeConfigSchema.optional(),
   remotionConfig: remotionConfigSchema.optional(),
+  renderConfig: videoSpecSchema.optional(),
+  resumeFromStage: z.enum(["ingest", "topic", "research", "script", "voice_clone", "compose", "render", "package"]).optional(),
+  runtimeConfig: runtimeConfigSchema.optional(),
+  voiceId: z.string().min(1).optional(),
+  voiceModel: z.string().min(1).optional(),
+  voiceProviderId: z.string().min(1).optional(),
 });
 
 export const jobByIdInputSchema = z.object({
