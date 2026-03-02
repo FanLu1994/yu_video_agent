@@ -1,5 +1,6 @@
-import { mkdir, stat } from "node:fs/promises";
+import { copyFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { app } from "electron";
 import type { AgentCompositionInput } from "@/remotion/Root";
 import { getDataRootPath } from "@/services/storage/runtime-paths";
 
@@ -16,6 +17,10 @@ export interface RenderAgentVideoResult {
 }
 
 const DEFAULT_COMPOSITION_ID = "AgentNarration";
+const REMOTION_CHROME_MODE = "headless-shell";
+
+type RendererModule = typeof import("@remotion/renderer");
+type RemotionBinaryType = "compositor" | "ffmpeg" | "ffprobe";
 
 export class RemotionRenderService {
   private async resolveEntryPoint() {
@@ -38,6 +43,162 @@ export class RemotionRenderService {
     );
   }
 
+  private getBrowserPlatform() {
+    if (process.platform === "win32") {
+      return "win64";
+    }
+
+    if (process.platform === "darwin") {
+      return process.arch === "arm64" ? "mac-arm64" : "mac-x64";
+    }
+
+    if (process.platform === "linux") {
+      return process.arch === "arm64" ? "linux-arm64" : "linux64";
+    }
+
+    throw new Error(
+      `Unsupported platform for Remotion browser download: ${process.platform}/${process.arch}`
+    );
+  }
+
+  private resolveManagedBrowserExecutable(dataRoot: string) {
+    const platform = this.getBrowserPlatform();
+    const downloadsRoot = path.join(
+      dataRoot,
+      ".remotion",
+      "chrome-headless-shell"
+    );
+
+    const executableName =
+      process.platform === "win32"
+        ? "chrome-headless-shell.exe"
+        : platform === "linux-arm64"
+          ? "headless_shell"
+          : "chrome-headless-shell";
+
+    return path.join(
+      downloadsRoot,
+      platform,
+      `chrome-headless-shell-${platform}`,
+      executableName
+    );
+  }
+
+  private async ensureManagedBrowser(
+    renderer: RendererModule,
+    dataRoot: string
+  ) {
+    await mkdir(dataRoot, { recursive: true });
+    const previousCwd = process.cwd();
+
+    try {
+      process.chdir(dataRoot);
+      await renderer.ensureBrowser({
+        chromeMode: REMOTION_CHROME_MODE,
+        logLevel: "warn",
+      });
+    } finally {
+      process.chdir(previousCwd);
+    }
+
+    const browserExecutable = this.resolveManagedBrowserExecutable(dataRoot);
+    await stat(browserExecutable);
+    return browserExecutable;
+  }
+
+  private async ensureRuntimeBinaries(
+    renderer: RendererModule,
+    binariesDirectory: string
+  ) {
+    await mkdir(binariesDirectory, { recursive: true });
+    const binaryTypes: RemotionBinaryType[] = [
+      "compositor",
+      "ffmpeg",
+      "ffprobe",
+    ];
+
+    for (const type of binaryTypes) {
+      const sourcePath = await this.resolveBinarySourcePath(renderer, type);
+      const targetPath = renderer.RenderInternals.getExecutablePath({
+        type,
+        indent: false,
+        logLevel: "warn",
+        binariesDirectory,
+      });
+
+      const shouldCopy = await this.shouldCopyBinary(sourcePath, targetPath);
+      if (shouldCopy) {
+        await copyFile(sourcePath, targetPath);
+      }
+    }
+  }
+
+  private getBinaryFileName(type: RemotionBinaryType) {
+    if (process.platform === "win32") {
+      if (type === "compositor") {
+        return "remotion.exe";
+      }
+
+      return `${type}.exe`;
+    }
+
+    if (type === "compositor") {
+      return "remotion";
+    }
+
+    return type;
+  }
+
+  private getPackagedBinarySourcePath(type: RemotionBinaryType) {
+    try {
+      if (!app.isPackaged) {
+        return undefined;
+      }
+
+      const resourcesRoot = path.resolve(app.getAppPath(), "..");
+      return path.join(
+        resourcesRoot,
+        "remotion-binaries",
+        `${process.platform}-${process.arch}`,
+        this.getBinaryFileName(type)
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async resolveBinarySourcePath(
+    renderer: RendererModule,
+    type: RemotionBinaryType
+  ) {
+    const packagedBinaryPath = this.getPackagedBinarySourcePath(type);
+    if (packagedBinaryPath) {
+      try {
+        await stat(packagedBinaryPath);
+        return packagedBinaryPath;
+      } catch {
+        // Fallback to renderer-managed binary in development/runtime environments.
+      }
+    }
+
+    return renderer.RenderInternals.getExecutablePath({
+      type,
+      indent: false,
+      logLevel: "warn",
+      binariesDirectory: null,
+    });
+  }
+
+  private async shouldCopyBinary(sourcePath: string, targetPath: string) {
+    const sourceStat = await stat(sourcePath);
+    try {
+      const targetStat = await stat(targetPath);
+      return sourceStat.size !== targetStat.size;
+    } catch {
+      return true;
+    }
+  }
+
   async renderAgentVideo({
     inputProps,
     onProgress,
@@ -50,14 +211,15 @@ export class RemotionRenderService {
 
     const entryPoint = await this.resolveEntryPoint();
     const videoPath = path.join(outputDir, "final", "video.mp4");
-    const binariesDirectory = path.join(getDataRootPath(), "remotion-binaries");
+    const dataRoot = getDataRootPath();
+    const binariesDirectory = path.join(dataRoot, "remotion-binaries");
     await mkdir(path.dirname(videoPath), { recursive: true });
-    await mkdir(binariesDirectory, { recursive: true });
 
-    await renderer.ensureBrowser({
-      chromeMode: "headless-shell",
-      logLevel: "warn",
-    });
+    await this.ensureRuntimeBinaries(renderer, binariesDirectory);
+    const browserExecutable = await this.ensureManagedBrowser(
+      renderer,
+      dataRoot
+    );
 
     const serveUrl = await bundle({
       entryPoint,
@@ -71,8 +233,9 @@ export class RemotionRenderService {
       serveUrl,
       inputProps,
       logLevel: "warn",
-      chromeMode: "headless-shell",
+      chromeMode: REMOTION_CHROME_MODE,
       binariesDirectory,
+      browserExecutable,
     });
 
     await renderer.renderMedia({
@@ -82,10 +245,14 @@ export class RemotionRenderService {
       outputLocation: videoPath,
       inputProps,
       logLevel: "warn",
-      chromeMode: "headless-shell",
+      chromeMode: REMOTION_CHROME_MODE,
       binariesDirectory,
+      browserExecutable,
       onProgress: (progress) => {
-        const percent = Math.max(0, Math.min(100, Math.round(progress.progress * 100)));
+        const percent = Math.max(
+          0,
+          Math.min(100, Math.round(progress.progress * 100))
+        );
         void onProgress?.(percent);
       },
     });

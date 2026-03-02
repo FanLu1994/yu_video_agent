@@ -106,6 +106,7 @@ out/
 # Local package stores
 .pnpm-store/
 .pnpm-store-temp/
+resources/remotion-binaries/
 
 # IDE
 .idea/

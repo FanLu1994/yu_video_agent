@@ -1,3 +1,4 @@
+import path from "node:path";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { MakerDeb } from "@electron-forge/maker-deb";
 import { MakerRpm } from "@electron-forge/maker-rpm";
@@ -10,6 +11,7 @@ import type { ForgeConfig } from "@electron-forge/shared-types";
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    extraResource: [path.resolve(process.cwd(), "resources", "remotion-binaries")],
   },
   rebuildConfig: {},
   makers: [
