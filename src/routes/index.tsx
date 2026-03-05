@@ -7,6 +7,7 @@ import {
   FolderOpen,
   HelpCircle,
   Layers3,
+  Loader2,
   Play,
   Sliders,
   SlidersHorizontal,
@@ -596,11 +597,19 @@ function HomePage() {
               历史任务
             </h3>
             {queueSummary ? (
-              <div className="flex gap-3 text-muted-foreground text-xs">
-                <span>排队 {queueSummary.counts.queued}</span>
-                <span>运行 {queueSummary.counts.running}</span>
-                <span>完成 {queueSummary.counts.completed}</span>
-                <span>失败 {queueSummary.counts.failed}</span>
+              <div className="text-right text-xs">
+                <div className="flex gap-3 text-muted-foreground">
+                  <span>排队 {queueSummary.counts.queued}</span>
+                  <span>运行 {queueSummary.counts.running}</span>
+                  <span>完成 {queueSummary.counts.completed}</span>
+                  <span>失败 {queueSummary.counts.failed}</span>
+                </div>
+                {isPending ? (
+                  <p className="mt-1 inline-flex items-center gap-1 text-primary/80">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    正在同步任务状态...
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -632,6 +641,12 @@ function HomePage() {
                     <p className="mt-1 text-muted-foreground text-xs">
                       阶段：{job.stage}
                     </p>
+                    {job.state === "running" && job.stage === "render" ? (
+                      <p className="mt-1 inline-flex items-center gap-1 text-primary text-xs">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        正在渲染视频帧...
+                      </p>
+                    ) : null}
                     <p className="text-muted-foreground text-xs">
                       {new Date(job.createdAt).toLocaleString()}
                     </p>

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Loader2 } from "lucide-react";
 import {
   type DragEvent,
   useCallback,
@@ -169,6 +169,14 @@ function toPlayableFileUrl(filePath: string | undefined) {
   return encodeURI(normalizedWindows);
 }
 
+function isJobNotFoundError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /Job '.+' not found\./.test(error.message);
+}
+
 function JobsPage() {
   const location = useLocation();
   const [providers, setProviders] = useState<
@@ -222,6 +230,7 @@ function JobsPage() {
   );
   const [isGeneratingVoicePreview, setIsGeneratingVoicePreview] =
     useState(false);
+  const [isCreatingJob, setIsCreatingJob] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   // 从主页传递的状态中恢复选中的任务ID
@@ -275,6 +284,8 @@ function JobsPage() {
   const canCancelSelectedJob = selectedJob
     ? selectedJob.state === "queued" || selectedJob.state === "running"
     : false;
+  const isSelectedJobRendering =
+    selectedJob?.state === "running" && selectedJob.stage === "render";
 
   useEffect(() => {
     const selectedProvider = enabledProviders.find(
@@ -482,8 +493,19 @@ function JobsPage() {
     }
 
     if (selectedJobId && activeTab === "detail") {
-      const outputs = await getAgentJobStageOutputs(selectedJobId);
-      setStepOutputs(outputs);
+      try {
+        const outputs = await getAgentJobStageOutputs(selectedJobId);
+        setStepOutputs(outputs);
+      } catch (error) {
+        if (isJobNotFoundError(error)) {
+          setSelectedJobId("");
+          setStepOutputs(null);
+          setActiveTab("queue");
+          setMessage("任务不存在或已被清理，已返回任务队列。");
+        } else {
+          throw error;
+        }
+      }
     }
   }, [activeTab, selectedJobId]);
 
@@ -506,6 +528,7 @@ function JobsPage() {
   }, [refresh]);
 
   async function onCreateJob() {
+    setIsCreatingJob(true);
     try {
       const localFiles = form.localFilesText
         .split("\n")
@@ -597,6 +620,8 @@ function JobsPage() {
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "创建任务失败。");
+    } finally {
+      setIsCreatingJob(false);
     }
   }
 
@@ -621,6 +646,13 @@ function JobsPage() {
         const rows = await getAgentJobStageOutputs(jobId);
         setStepOutputs(rows);
       } catch (error) {
+        if (isJobNotFoundError(error)) {
+          setSelectedJobId("");
+          setStepOutputs(null);
+          setActiveTab("queue");
+          setMessage("该任务不存在，已返回任务队列。");
+          return;
+        }
         setMessage(
           error instanceof Error ? error.message : "加载流程产出失败。"
         );
@@ -734,12 +766,20 @@ function JobsPage() {
             </p>
           </div>
           {queueSummary ? (
-            <p className="text-muted-foreground text-xs">
-              排队 {queueSummary.counts.queued} · 运行中{" "}
-              {queueSummary.counts.running} · 完成{" "}
-              {queueSummary.counts.completed} · 失败{" "}
-              {queueSummary.counts.failed}
-            </p>
+            <div className="text-right text-xs">
+              <p className="text-muted-foreground">
+                排队 {queueSummary.counts.queued} · 运行中{" "}
+                {queueSummary.counts.running} · 完成{" "}
+                {queueSummary.counts.completed} · 失败{" "}
+                {queueSummary.counts.failed}
+              </p>
+              {isPending ? (
+                <p className="mt-1 inline-flex items-center gap-1 text-primary/80">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  正在同步最新任务状态...
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </header>
 
@@ -994,8 +1034,15 @@ function JobsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button disabled={isPending} onClick={onCreateJob}>
-                    创建任务
+                  <Button disabled={isCreatingJob || isPending} onClick={onCreateJob}>
+                    {isCreatingJob ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        创建中...
+                      </>
+                    ) : (
+                      "创建任务"
+                    )}
                   </Button>
                   {message ? (
                     <p className="text-muted-foreground text-sm">{message}</p>
@@ -1054,10 +1101,17 @@ function JobsPage() {
                                       阶段：{job.stage} · 队列位：
                                       {job.queuePosition}
                                     </p>
-                            <p className="text-muted-foreground text-xs">
+                                    <p className="text-muted-foreground text-xs">
                                       更新：
                                       {new Date(job.updatedAt).toLocaleString()}
                                     </p>
+                                    {job.state === "running" &&
+                                    job.stage === "render" ? (
+                                      <p className="mt-1 inline-flex items-center gap-1 text-primary text-xs">
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                        正在渲染视频帧...
+                                      </p>
+                                    ) : null}
                                     {job.errors.length > 0 ? (
                                       <p className="mt-1 line-clamp-2 text-rose-700 text-xs">
                                         错误原因：{job.errors[job.errors.length - 1].message}
@@ -1169,6 +1223,12 @@ function JobsPage() {
                         />
                       </div>
                     </div>
+                    {isSelectedJobRendering ? (
+                      <div className="mb-3 inline-flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-primary text-xs">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        视频渲染中，请稍候... 当前进度 {selectedJob.progress}%
+                      </div>
+                    ) : null}
                     <div className="grid grid-cols-1 gap-2 text-xs md:grid-cols-2">
                       <p className="text-muted-foreground">
                         视频模板：

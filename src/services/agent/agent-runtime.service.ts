@@ -520,6 +520,32 @@ export class AgentRuntimeService {
         await this.appendPipelineLog(pipelineLogPath, logLine);
       }
     };
+    const createRenderProgressReporter = () => {
+      let lastOverallProgress = -1;
+      let lastEmitAt = 0;
+
+      return async (renderProgressPercent: number) => {
+        const boundedRender = Math.max(
+          0,
+          Math.min(100, Math.round(renderProgressPercent))
+        );
+        const overall = Math.max(
+          84,
+          Math.min(95, Math.round(84 + boundedRender * 0.11))
+        );
+        const now = Date.now();
+        const shouldEmit =
+          overall !== lastOverallProgress &&
+          (overall - lastOverallProgress >= 1 || now - lastEmitAt >= 800);
+        if (!shouldEmit) {
+          return;
+        }
+
+        lastOverallProgress = overall;
+        lastEmitAt = now;
+        await emit("render", overall, "remotionRenderTool");
+      };
+    };
 
     await emit("ingest", 8, "ingestTool", "Pipeline started.");
 
@@ -1056,6 +1082,7 @@ export class AgentRuntimeService {
           throw new Error("cached video path missing");
         }
         finalVideoPath = cachedVideoPath;
+        await emit("render", 95, "remotionRenderTool", "Render cache reused.");
         appLogger.info("阶段结果：render", {
           jobId,
           reusedCache: true,
@@ -1074,6 +1101,7 @@ export class AgentRuntimeService {
           audioPath: remotionInputProps.audioPath ?? null,
         });
         let lastLoggedRenderPercent = -1;
+        const reportRenderProgress = createRenderProgressReporter();
         const renderResult = await this.remotionRenderer.renderAgentVideo({
           jobId,
           outputDir,
@@ -1081,6 +1109,7 @@ export class AgentRuntimeService {
           inputProps: remotionInputProps,
           onProgress: async (percent) => {
             const rounded = Math.round(percent);
+            await reportRenderProgress(rounded);
             if (
               rounded !== lastLoggedRenderPercent &&
               (rounded % 10 === 0 || rounded >= 95)
@@ -1099,6 +1128,7 @@ export class AgentRuntimeService {
             }
           },
         });
+        await emit("render", 95, "remotionRenderTool", "Render completed.");
         finalVideoPath = renderResult.videoPath;
         await writeStageOutput("render", {
           progress: 84,
@@ -1122,6 +1152,7 @@ export class AgentRuntimeService {
         audioPath: remotionInputProps.audioPath ?? null,
       });
       let lastLoggedRenderPercent = -1;
+      const reportRenderProgress = createRenderProgressReporter();
       const renderResult = await this.remotionRenderer.renderAgentVideo({
         jobId,
         outputDir,
@@ -1129,6 +1160,7 @@ export class AgentRuntimeService {
         inputProps: remotionInputProps,
         onProgress: async (percent) => {
           const rounded = Math.round(percent);
+          await reportRenderProgress(rounded);
           if (
             rounded !== lastLoggedRenderPercent &&
             (rounded % 10 === 0 || rounded >= 95)
@@ -1147,6 +1179,7 @@ export class AgentRuntimeService {
           }
         },
       });
+      await emit("render", 95, "remotionRenderTool", "Render completed.");
       finalVideoPath = renderResult.videoPath;
       await writeStageOutput("render", {
         progress: 84,

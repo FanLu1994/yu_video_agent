@@ -24,6 +24,12 @@ type RendererModule = typeof import("@remotion/renderer");
 type RemotionBinaryType = "compositor" | "ffmpeg" | "ffprobe";
 
 export class RemotionRenderService {
+  private runtimePrepared = false;
+  private runtimePreparePromise: Promise<void> | null = null;
+  private bundleEntryPoint: string | null = null;
+  private bundleServeUrl: string | null = null;
+  private bundlePromise: Promise<string> | null = null;
+
   private async resolveEntryPoint() {
     const candidates = app.isPackaged
       ? [
@@ -189,6 +195,88 @@ export class RemotionRenderService {
     }
   }
 
+  private async ensureRuntimePrepared(
+    renderer: RendererModule,
+    dataRoot: string,
+    binariesDirectory: string
+  ) {
+    if (this.runtimePrepared) {
+      return;
+    }
+
+    if (!this.runtimePreparePromise) {
+      this.runtimePreparePromise = (async () => {
+        await this.ensureRuntimeBinaries(renderer, binariesDirectory);
+        await this.ensureManagedBrowser(renderer, dataRoot);
+        this.runtimePrepared = true;
+      })().finally(() => {
+        this.runtimePreparePromise = null;
+      });
+    }
+
+    await this.runtimePreparePromise;
+  }
+
+  private async getOrCreateServeUrl(
+    bundle: typeof import("@remotion/bundler").bundle,
+    entryPoint: string,
+    onProgress?: (progressPercent: number) => void | Promise<void>
+  ) {
+    if (this.bundleServeUrl && this.bundleEntryPoint === entryPoint) {
+      return this.bundleServeUrl;
+    }
+
+    if (this.bundlePromise && this.bundleEntryPoint === entryPoint) {
+      return this.bundlePromise;
+    }
+
+    this.bundleEntryPoint = entryPoint;
+    this.bundlePromise = bundle({
+      entryPoint,
+      onProgress: (progress) => {
+        // Bundle is a meaningful waiting period - expose it as early progress.
+        void onProgress?.(Math.max(1, Math.min(30, Math.round(progress * 30))));
+      },
+      // Reuse cache for faster repeated renders in desktop app runtime.
+      enableCaching: true,
+    })
+      .then((serveUrl) => {
+        this.bundleServeUrl = serveUrl;
+        return serveUrl;
+      })
+      .finally(() => {
+        this.bundlePromise = null;
+      });
+
+    return this.bundlePromise;
+  }
+
+  private logPhaseStart(
+    jobId: string,
+    phase: "bundle" | "selectComposition" | "renderMedia",
+    extra: Record<string, unknown> = {}
+  ) {
+    appLogger.info("Remotion phase started", {
+      jobId,
+      phase,
+      ...extra,
+    });
+  }
+
+  private logPhaseEnd(
+    jobId: string,
+    phase: "bundle" | "selectComposition" | "renderMedia",
+    startedAt: number,
+    extra: Record<string, unknown> = {}
+  ) {
+    appLogger.info("Remotion phase completed", {
+      jobId,
+      phase,
+      durationMs: Date.now() - startedAt,
+      ...extra,
+    });
+  }
+
   async renderAgentVideo({
     compositionId,
     inputProps,
@@ -220,8 +308,7 @@ export class RemotionRenderService {
       binariesDirectory,
     });
 
-    await this.ensureRuntimeBinaries(renderer, binariesDirectory);
-    await this.ensureManagedBrowser(renderer, dataRoot);
+    await this.ensureRuntimePrepared(renderer, dataRoot, binariesDirectory);
     const browserExecutable =
       process.env.REMOTION_BROWSER_EXECUTABLE?.trim() || undefined;
 
@@ -232,18 +319,20 @@ export class RemotionRenderService {
     const fallbackTemplate = resolveRemotionTemplateById(undefined);
     const selectedCompositionId =
       compositionId || fallbackTemplate.compositionId;
-
-    const serveUrl = await bundle({
+    const bundleStartedAt = Date.now();
+    this.logPhaseStart(jobId, "bundle", {
       entryPoint,
-      onProgress: (progress) => {
-        if (progress >= 0.95) {
-          void onProgress?.(40);
-        }
-      },
-      // Prevent cache path surprises inside packaged runtime.
-      enableCaching: false,
+    });
+    const serveUrl = await this.getOrCreateServeUrl(bundle, entryPoint, onProgress);
+    this.logPhaseEnd(jobId, "bundle", bundleStartedAt, {
+      entryPoint,
+      serveUrl,
     });
 
+    const selectCompositionStartedAt = Date.now();
+    this.logPhaseStart(jobId, "selectComposition", {
+      compositionId: selectedCompositionId,
+    });
     const composition = await renderer.selectComposition({
       id: selectedCompositionId,
       serveUrl,
@@ -253,8 +342,20 @@ export class RemotionRenderService {
       binariesDirectory,
       browserExecutable,
     });
+    this.logPhaseEnd(jobId, "selectComposition", selectCompositionStartedAt, {
+      compositionId: selectedCompositionId,
+      durationInFrames: composition.durationInFrames,
+      fps: composition.fps,
+      width: composition.width,
+      height: composition.height,
+    });
 
     let lastLoggedPercent = -1;
+    const renderMediaStartedAt = Date.now();
+    this.logPhaseStart(jobId, "renderMedia", {
+      compositionId: selectedCompositionId,
+      outputLocation: videoPath,
+    });
     await renderer.renderMedia({
       codec: "h264",
       audioCodec: "aac",
@@ -274,6 +375,10 @@ export class RemotionRenderService {
           void onProgress?.(percent);
         }
       },
+    });
+    this.logPhaseEnd(jobId, "renderMedia", renderMediaStartedAt, {
+      compositionId: selectedCompositionId,
+      outputLocation: videoPath,
     });
 
     const fileStats = await stat(videoPath);
