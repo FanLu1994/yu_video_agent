@@ -51,6 +51,7 @@ const DEFAULT_TOPIC_PROMPT =
   "请输出 1 条 14-22 字的视频标题，仅输出标题本身，不要解释。";
 const DEFAULT_SCRIPT_PROMPT =
   "请输出 6 句旁白脚本，每句独立成行，保持逻辑连贯，不加编号和 Markdown。";
+const MAX_INLINE_AUDIO_SIZE_BYTES = 25 * 1024 * 1024;
 
 const THEME_COLOR_MAP: Record<
   NonNullable<AgentRemotionConfig["theme"]>,
@@ -219,6 +220,17 @@ export class AgentRuntimeService {
       return {
         exists: false,
         sizeBytes: 0,
+        sourceType: "none" as const,
+      };
+    }
+
+    if (audioPath.startsWith("data:")) {
+      const commaIndex = audioPath.indexOf(",");
+      const payloadLength = commaIndex >= 0 ? audioPath.length - commaIndex - 1 : 0;
+      return {
+        exists: true,
+        sizeBytes: payloadLength,
+        sourceType: "data_url" as const,
       };
     }
 
@@ -227,13 +239,87 @@ export class AgentRuntimeService {
       return {
         exists: true,
         sizeBytes: fileStats.size,
+        sourceType: "file" as const,
       };
     } catch {
       return {
         exists: false,
         sizeBytes: 0,
+        sourceType: "file" as const,
       };
     }
+  }
+
+  private resolveAudioMimeType(filePath: string) {
+    const ext = path.extname(filePath).toLowerCase();
+    switch (ext) {
+      case ".mp3":
+        return "audio/mpeg";
+      case ".wav":
+        return "audio/wav";
+      case ".m4a":
+        return "audio/mp4";
+      case ".aac":
+        return "audio/aac";
+      case ".ogg":
+        return "audio/ogg";
+      case ".flac":
+        return "audio/flac";
+      default:
+        return "audio/mpeg";
+    }
+  }
+
+  private resolveLocalAudioFilePath(audioPath: string) {
+    if (audioPath.startsWith("file://")) {
+      return fileURLToPath(audioPath);
+    }
+
+    if (/^[a-zA-Z]:[\\/]/.test(audioPath) || audioPath.startsWith("/")) {
+      return audioPath;
+    }
+
+    return undefined;
+  }
+
+  private async toRemotionAudioSrc(
+    audioPath: string | undefined,
+    jobId: string
+  ) {
+    if (!audioPath) {
+      return undefined;
+    }
+
+    if (audioPath.startsWith("data:") || /^https?:\/\//i.test(audioPath)) {
+      return audioPath;
+    }
+
+    const localAudioPath = this.resolveLocalAudioFilePath(audioPath);
+    if (!localAudioPath) {
+      return audioPath;
+    }
+
+    const fileStats = await stat(localAudioPath);
+    if (fileStats.size <= 0) {
+      throw new Error(`Audio file is empty: ${localAudioPath}`);
+    }
+    if (fileStats.size > MAX_INLINE_AUDIO_SIZE_BYTES) {
+      throw new Error(
+        `Audio file too large for inline data URL (${fileStats.size} bytes): ${localAudioPath}`
+      );
+    }
+
+    const audioBuffer = await readFile(localAudioPath);
+    const mimeType = this.resolveAudioMimeType(localAudioPath);
+    const dataUrl = `data:${mimeType};base64,${audioBuffer.toString("base64")}`;
+    appLogger.info("Remotion audio source normalized to data URL", {
+      jobId,
+      localAudioPath,
+      sizeBytes: fileStats.size,
+      mimeType,
+      dataUrlLength: dataUrl.length,
+    });
+    return dataUrl;
   }
 
   private async ingestSources(
@@ -1101,6 +1187,10 @@ export class AgentRuntimeService {
     await writeFile(timelinePath, JSON.stringify(timeline, null, 2), "utf-8");
 
     await emit("render", 84, "remotionRenderTool", "Rendering video.");
+    remotionInputProps = {
+      ...remotionInputProps,
+      audioPath: await this.toRemotionAudioSrc(remotionInputProps.audioPath, jobId),
+    };
     let finalVideoPath: string;
     if (await shouldSkipStage("render")) {
       const renderStagePath = path.join(stagesDir, "render.json");

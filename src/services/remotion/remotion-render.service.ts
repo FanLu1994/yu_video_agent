@@ -263,6 +263,41 @@ export class RemotionRenderService {
     });
   }
 
+  private summarizeAudioSrc(audioSrc: string | undefined) {
+    if (!audioSrc) {
+      return {
+        kind: "none",
+      };
+    }
+
+    if (audioSrc.startsWith("data:")) {
+      return {
+        kind: "data_url",
+        length: audioSrc.length,
+        preview: `${audioSrc.slice(0, 64)}...`,
+      };
+    }
+
+    if (/^https?:\/\//i.test(audioSrc)) {
+      return {
+        kind: "http",
+        url: audioSrc,
+      };
+    }
+
+    if (audioSrc.startsWith("file://")) {
+      return {
+        kind: "file_url",
+        url: audioSrc,
+      };
+    }
+
+    return {
+      kind: "path_or_relative",
+      value: audioSrc,
+    };
+  }
+
   private logPhaseEnd(
     jobId: string,
     phase: "bundle" | "selectComposition" | "renderMedia",
@@ -355,7 +390,7 @@ export class RemotionRenderService {
     this.logPhaseStart(jobId, "renderMedia", {
       compositionId: selectedCompositionId,
       outputLocation: videoPath,
-      audioPath: inputProps.audioPath ?? null,
+      audioSrc: this.summarizeAudioSrc(inputProps.audioPath),
     });
     await renderer.renderMedia({
       codec: "h264",
