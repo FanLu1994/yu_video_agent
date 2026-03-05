@@ -7,6 +7,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { AgentNarrationSchema } from "./AgentNarration";
+import { RemotionAudioTrack } from "./audio";
 
 export const AgentNarrationBulletinSchema = AgentNarrationSchema;
 
@@ -21,6 +22,7 @@ export const AgentNarrationBulletin = ({
   scriptLines,
   subtitle,
   title,
+  audioPath,
 }: AgentNarrationBulletinProps) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -181,6 +183,7 @@ export const AgentNarrationBulletin = ({
           }}
         />
       </div>
+      <RemotionAudioTrack audioPath={audioPath} />
     </AbsoluteFill>
   );
 };

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import {
-  Audio,
   AbsoluteFill,
   Easing,
   interpolate,
@@ -8,6 +7,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+import { RemotionAudioTrack } from "./audio";
 
 export const AgentNarrationSchema = z.object({
   accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
@@ -21,23 +21,6 @@ export const AgentNarrationSchema = z.object({
 
 export type AgentNarrationProps = z.infer<typeof AgentNarrationSchema>;
 
-const normalizeAudioSrc = (audioPath: string) => {
-  if (/^(https?:\/\/|data:|blob:|file:\/\/)/i.test(audioPath)) {
-    return audioPath;
-  }
-
-  if (/^[a-zA-Z]:[\\/]/.test(audioPath)) {
-    const windowsPath = audioPath.replace(/\\/g, "/");
-    return encodeURI(`file:///${windowsPath}`);
-  }
-
-  if (audioPath.startsWith("/")) {
-    return encodeURI(`file://${audioPath}`);
-  }
-
-  return audioPath;
-};
-
 export const AgentNarration = ({
   accentColor,
   backgroundEndColor,
@@ -49,7 +32,6 @@ export const AgentNarration = ({
 }: AgentNarrationProps) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const audioSrc = audioPath ? normalizeAudioSrc(audioPath) : undefined;
 
   const lineDuration = Math.max(1, Math.round(fps * 3.2));
   const activeLineIndex = Math.min(
@@ -182,7 +164,7 @@ export const AgentNarration = ({
         </div>
       ) : null}
 
-      {audioSrc ? <Audio src={audioSrc} /> : null}
+      <RemotionAudioTrack audioPath={audioPath} />
     </AbsoluteFill>
   );
 };

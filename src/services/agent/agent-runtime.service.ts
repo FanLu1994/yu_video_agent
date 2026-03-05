@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -212,6 +212,28 @@ export class AgentRuntimeService {
         endSec,
       };
     });
+  }
+
+  private async probeAudioFile(audioPath: string | undefined) {
+    if (!audioPath) {
+      return {
+        exists: false,
+        sizeBytes: 0,
+      };
+    }
+
+    try {
+      const fileStats = await stat(audioPath);
+      return {
+        exists: true,
+        sizeBytes: fileStats.size,
+      };
+    } catch {
+      return {
+        exists: false,
+        sizeBytes: 0,
+      };
+    }
   }
 
   private async ingestSources(
@@ -994,11 +1016,17 @@ export class AgentRuntimeService {
           JSON.stringify(remotionInputProps, null, 2),
           "utf-8"
         );
+        const composeAudioProbe = await this.probeAudioFile(
+          remotionInputProps.audioPath
+        );
         await writeStageOutput("compose", {
           progress: 74,
           remotionTemplateId: remotionTemplate.id,
           compositionId: remotionTemplate.compositionId,
           compositionInputPath,
+          audioPath: remotionInputProps.audioPath ?? null,
+          audioFileExists: composeAudioProbe.exists,
+          audioFileSizeBytes: composeAudioProbe.sizeBytes,
           durationSec: remotionInputProps.durationSec,
           fps: remotionInputProps.fps,
           width: remotionInputProps.width,
@@ -1044,11 +1072,17 @@ export class AgentRuntimeService {
         JSON.stringify(remotionInputProps, null, 2),
         "utf-8"
       );
+      const composeAudioProbe = await this.probeAudioFile(
+        remotionInputProps.audioPath
+      );
       await writeStageOutput("compose", {
         progress: 74,
         remotionTemplateId: remotionTemplate.id,
         compositionId: remotionTemplate.compositionId,
         compositionInputPath,
+        audioPath: remotionInputProps.audioPath ?? null,
+        audioFileExists: composeAudioProbe.exists,
+        audioFileSizeBytes: composeAudioProbe.sizeBytes,
         durationSec: remotionInputProps.durationSec,
         fps: remotionInputProps.fps,
         width: remotionInputProps.width,
@@ -1099,6 +1133,7 @@ export class AgentRuntimeService {
           scriptLines: remotionInputProps.scriptLines.length,
           durationSec: remotionInputProps.durationSec,
           audioPath: remotionInputProps.audioPath ?? null,
+          audioFile: await this.probeAudioFile(remotionInputProps.audioPath),
         });
         let lastLoggedRenderPercent = -1;
         const reportRenderProgress = createRenderProgressReporter();
@@ -1150,6 +1185,7 @@ export class AgentRuntimeService {
         scriptLines: remotionInputProps.scriptLines.length,
         durationSec: remotionInputProps.durationSec,
         audioPath: remotionInputProps.audioPath ?? null,
+        audioFile: await this.probeAudioFile(remotionInputProps.audioPath),
       });
       let lastLoggedRenderPercent = -1;
       const reportRenderProgress = createRenderProgressReporter();

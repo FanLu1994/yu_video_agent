@@ -8,6 +8,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { AgentNarrationSchema } from "./AgentNarration";
+import { RemotionAudioTrack } from "./audio";
 
 export const AgentNarrationSpotlightSchema = AgentNarrationSchema;
 
@@ -22,6 +23,7 @@ export const AgentNarrationSpotlight = ({
   scriptLines,
   subtitle,
   title,
+  audioPath,
 }: AgentNarrationSpotlightProps) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -135,6 +137,7 @@ export const AgentNarrationSpotlight = ({
           })}
         </div>
       </div>
+      <RemotionAudioTrack audioPath={audioPath} />
     </AbsoluteFill>
   );
 };

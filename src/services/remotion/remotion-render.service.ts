@@ -355,6 +355,7 @@ export class RemotionRenderService {
     this.logPhaseStart(jobId, "renderMedia", {
       compositionId: selectedCompositionId,
       outputLocation: videoPath,
+      audioPath: inputProps.audioPath ?? null,
     });
     await renderer.renderMedia({
       codec: "h264",
