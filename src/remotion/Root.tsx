@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { type CalculateMetadataFunction, Composition } from "remotion";
 import { AgentNarration, AgentNarrationSchema } from "./AgentNarration";
+import { AgentNarrationBulletin } from "./AgentNarrationBulletin";
+import { AgentNarrationSpotlight } from "./AgentNarrationSpotlight";
 
 export const AgentCompositionInputSchema = AgentNarrationSchema.extend({
   durationSec: z.number().min(4).max(600),
@@ -29,31 +31,57 @@ const calculateMetadata: CalculateMetadataFunction<AgentCompositionInput> = ({
 };
 
 export const RemotionRoot = () => {
+  const commonDefaultProps = {
+    title: "Video Agent 默认叙事视频",
+    subtitle: "Remotion Render",
+    scriptLines: [
+      "这是一个默认脚本片段，用于本地验证渲染链路。",
+      "可以在任务创建时配置 prompt 与渲染参数，生成定制视频。",
+    ],
+    accentColor: "#38bdf8",
+    backgroundStartColor: "#0f172a",
+    backgroundEndColor: "#1e293b",
+    durationSec: 24,
+    fps: 30,
+    width: 1920,
+    height: 1080,
+  } satisfies AgentCompositionInput;
+
   return (
-    <Composition
-      id="AgentNarration"
-      component={AgentNarration}
-      durationInFrames={900}
-      fps={30}
-      width={1920}
-      height={1080}
-      defaultProps={{
-        title: "Video Agent 默认叙事视频",
-        subtitle: "Remotion Render",
-        scriptLines: [
-          "这是一个默认脚本片段，用于本地验证渲染链路。",
-          "可以在任务创建时配置 prompt 与渲染参数，生成定制视频。",
-        ],
-        accentColor: "#38bdf8",
-        backgroundStartColor: "#0f172a",
-        backgroundEndColor: "#1e293b",
-        durationSec: 24,
-        fps: 30,
-        width: 1920,
-        height: 1080,
-      } satisfies AgentCompositionInput}
-      schema={AgentCompositionInputSchema}
-      calculateMetadata={calculateMetadata}
-    />
+    <>
+      <Composition
+        id="AgentNarrationClassic"
+        component={AgentNarration}
+        durationInFrames={900}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={commonDefaultProps}
+        schema={AgentCompositionInputSchema}
+        calculateMetadata={calculateMetadata}
+      />
+      <Composition
+        id="AgentNarrationSpotlight"
+        component={AgentNarrationSpotlight}
+        durationInFrames={900}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={commonDefaultProps}
+        schema={AgentCompositionInputSchema}
+        calculateMetadata={calculateMetadata}
+      />
+      <Composition
+        id="AgentNarrationBulletin"
+        component={AgentNarrationBulletin}
+        durationInFrames={900}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={commonDefaultProps}
+        schema={AgentCompositionInputSchema}
+        calculateMetadata={calculateMetadata}
+      />
+    </>
   );
 };

@@ -12,6 +12,7 @@ describe("createJobInputSchema", () => {
   it("accepts prompts and remotion config", () => {
     const parsed = createJobInputSchema.parse({
       ...BASE_INPUT,
+      remotionTemplateId: "spotlight",
       prompts: {
         systemPrompt: "你是编导",
         topicPrompt: "提炼标题",
@@ -34,6 +35,7 @@ describe("createJobInputSchema", () => {
     });
 
     expect(parsed.remotionConfig?.theme).toBe("aurora");
+    expect(parsed.remotionTemplateId).toBe("spotlight");
     expect(parsed.prompts?.scriptPrompt).toBe("生成脚本");
   });
 
@@ -44,6 +46,15 @@ describe("createJobInputSchema", () => {
         remotionConfig: {
           accentColor: "blue",
         },
+      })
+    ).toThrow();
+  });
+
+  it("rejects unsupported template id", () => {
+    expect(() =>
+      createJobInputSchema.parse({
+        ...BASE_INPUT,
+        remotionTemplateId: "unknown",
       })
     ).toThrow();
   });

@@ -40,6 +40,11 @@ import {
 import { RemotionBestPracticesPanel } from "@/components/remotion-best-practices-panel";
 import { Button } from "@/components/ui/button";
 import {
+  DEFAULT_REMOTION_TEMPLATE_ID,
+  REMOTION_TEMPLATE_OPTIONS,
+  type RemotionTemplateId,
+} from "@/constants";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -53,17 +58,25 @@ import {
 
 interface JobFormState {
   articleUrlsText: string;
+  durationSecMax: string;
+  durationSecMin: string;
   localFilesText: string;
   model: string;
   providerId: string;
+  remotionTemplateId: RemotionTemplateId;
+  remotionTheme: "aurora" | "sunset" | "ocean" | "";
   voiceId: string;
   voiceModel: string;
   voiceProviderId: string;
 }
 
 const DEFAULT_FORM: JobFormState = {
+  remotionTheme: "",
+  durationSecMin: "",
+  durationSecMax: "",
   providerId: "",
   model: "",
+  remotionTemplateId: DEFAULT_REMOTION_TEMPLATE_ID,
   voiceProviderId: "",
   voiceModel: "",
   voiceId: "",
@@ -210,6 +223,21 @@ function HomePage() {
   }, [agentProviderOptions, enabledProviders, voiceProviderOptions]);
 
   useEffect(() => {
+    if (!agentConfig) {
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      remotionTheme: prev.remotionTheme || agentConfig.remotionConfig.theme,
+      durationSecMin:
+        prev.durationSecMin || String(agentConfig.videoSpec.durationSecMin),
+      durationSecMax:
+        prev.durationSecMax || String(agentConfig.videoSpec.durationSecMax),
+    }));
+  }, [agentConfig]);
+
+  useEffect(() => {
     if (voices.length === 0) {
       return;
     }
@@ -342,12 +370,28 @@ function HomePage() {
       const trimmed = value?.trim() ?? "";
       return trimmed.length > 0 ? trimmed : undefined;
     };
+    const durationSecMin = Number.parseInt(form.durationSecMin, 10);
+    const durationSecMax = Number.parseInt(form.durationSecMax, 10);
+    if (
+      !Number.isFinite(durationSecMin) ||
+      !Number.isFinite(durationSecMax) ||
+      durationSecMin <= 0 ||
+      durationSecMax <= 0
+    ) {
+      setMessage("请填写有效时长（正整数秒）。");
+      return;
+    }
+    if (durationSecMin > durationSecMax) {
+      setMessage("最短时长不能大于最长时长。");
+      return;
+    }
 
     setIsCreating(true);
     try {
       const created = await createAgentJob({
         providerId: form.providerId,
         model: form.model,
+        remotionTemplateId: form.remotionTemplateId,
         voiceProviderId: form.voiceProviderId || undefined,
         voiceModel: form.voiceModel || undefined,
         voiceId: form.voiceId || undefined,
@@ -364,7 +408,7 @@ function HomePage() {
           maxOutputTokens: agentConfig.runtimeConfig.maxOutputTokens,
         },
         remotionConfig: {
-          theme: agentConfig.remotionConfig.theme,
+          theme: form.remotionTheme || agentConfig.remotionConfig.theme,
           fps: agentConfig.remotionConfig.fps,
           width: agentConfig.remotionConfig.width,
           height: agentConfig.remotionConfig.height,
@@ -376,11 +420,20 @@ function HomePage() {
             agentConfig.remotionConfig.backgroundEndColor
           ),
         },
-        videoSpec: agentConfig.videoSpec,
+        videoSpec: {
+          ...agentConfig.videoSpec,
+          durationSecMin,
+          durationSecMax,
+        },
       });
 
       setMessage(`任务已创建：${created.jobId.slice(0, 12)}...`);
-      setForm(DEFAULT_FORM);
+      setForm({
+        ...DEFAULT_FORM,
+        remotionTheme: agentConfig.remotionConfig.theme,
+        durationSecMin: String(agentConfig.videoSpec.durationSecMin),
+        durationSecMax: String(agentConfig.videoSpec.durationSecMax),
+      });
       setShowNewTaskDialog(false);
       await refresh();
     } catch (error) {
@@ -727,6 +780,80 @@ function HomePage() {
             </div>
 
             <label className="field-label">
+              <span>视频模板</span>
+              <select
+                className="field-input"
+                onChange={(event) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    remotionTemplateId: event.target.value as RemotionTemplateId,
+                  }))
+                }
+                value={form.remotionTemplateId}
+              >
+                {REMOTION_TEMPLATE_OPTIONS.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.label}（{template.description}）
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="field-grid">
+              <label className="field-label">
+                <span>主题</span>
+                <select
+                  className="field-input"
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      remotionTheme: event.target.value as
+                        | "aurora"
+                        | "sunset"
+                        | "ocean",
+                    }))
+                  }
+                  value={form.remotionTheme}
+                >
+                  <option disabled value="">
+                    请选择主题
+                  </option>
+                  <option value="aurora">Aurora</option>
+                  <option value="sunset">Sunset</option>
+                  <option value="ocean">Ocean</option>
+                </select>
+              </label>
+              <label className="field-label">
+                <span>最短时长（秒）</span>
+                <input
+                  className="field-input"
+                  inputMode="numeric"
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      durationSecMin: event.target.value,
+                    }))
+                  }
+                  value={form.durationSecMin}
+                />
+              </label>
+              <label className="field-label">
+                <span>最长时长（秒）</span>
+                <input
+                  className="field-input"
+                  inputMode="numeric"
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      durationSecMax: event.target.value,
+                    }))
+                  }
+                  value={form.durationSecMax}
+                />
+              </label>
+            </div>
+
+            <label className="field-label">
               <span>音色（可选）</span>
               <select
                 className="field-input"
@@ -843,7 +970,7 @@ function HomePage() {
             </div>
 
             <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-muted-foreground text-xs">
-              Agent 的 Prompt / Runtime / Remotion 参数已迁移到侧边栏的
+              Agent 的 Prompt / Runtime 与分辨率等参数在侧边栏的
               <Button
                 asChild
                 className="ml-1 h-6 px-2 text-xs"
@@ -865,7 +992,16 @@ function HomePage() {
               <Button
                 disabled={isCreating || isPending}
                 onClick={() => {
-                  setForm(DEFAULT_FORM);
+                  setForm({
+                    ...DEFAULT_FORM,
+                    remotionTheme: agentConfig?.remotionConfig.theme ?? "",
+                    durationSecMin: agentConfig
+                      ? String(agentConfig.videoSpec.durationSecMin)
+                      : "",
+                    durationSecMax: agentConfig
+                      ? String(agentConfig.videoSpec.durationSecMax)
+                      : "",
+                  });
                   setShowNewTaskDialog(false);
                   setMessage("");
                 }}

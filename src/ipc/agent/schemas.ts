@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { REMOTION_TEMPLATE_IDS } from "@/constants";
 
 const videoSpecSchema = z.object({
   aspect: z.literal("16:9"),
@@ -34,9 +35,10 @@ export const createJobInputSchema = z.object({
   localFiles: z.array(z.string()),
   providerId: z.string().min(1),
   model: z.string().min(1),
+  remotionTemplateId: z.enum(REMOTION_TEMPLATE_IDS).optional(),
   prompts: promptConfigSchema.optional(),
   remotionConfig: remotionConfigSchema.optional(),
-  renderConfig: videoSpecSchema.optional(),
+  videoSpec: videoSpecSchema.optional(),
   resumeFromStage: z.enum(["ingest", "topic", "research", "script", "voice_clone", "compose", "render", "package"]).optional(),
   runtimeConfig: runtimeConfigSchema.optional(),
   voiceId: z.string().min(1).optional(),

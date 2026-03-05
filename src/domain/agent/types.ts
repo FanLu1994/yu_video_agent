@@ -1,3 +1,5 @@
+import type { RemotionTemplateId } from "@/constants";
+
 export type JobState =
   | "queued"
   | "running"
@@ -85,6 +87,7 @@ export interface RunAgentJobRequest {
   prompts?: AgentPromptConfig;
   providerId: string;
   remotionConfig?: AgentRemotionConfig;
+  remotionTemplateId?: RemotionTemplateId;
   resumeFromStage?: Stage;
   runtimeConfig?: AgentRuntimeConfig;
   videoSpec?: VideoSpec;

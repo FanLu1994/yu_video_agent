@@ -1,6 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  DEFAULT_REMOTION_TEMPLATE_ID,
+  resolveRemotionTemplateById,
+} from "@/constants";
 import type {
   AgentRemotionConfig,
   JobArtifacts,
@@ -392,6 +396,8 @@ export class AgentRuntimeService {
     const { jobId, onStageUpdate, request, resumeFromStage } = input;
     appLogger.info("Agent pipeline started", {
       jobId,
+      remotionTemplateId:
+        request.remotionTemplateId ?? DEFAULT_REMOTION_TEMPLATE_ID,
       resumeFromStage: resumeFromStage ?? null,
       providerId: request.providerId,
       model: request.model,
@@ -894,6 +900,9 @@ export class AgentRuntimeService {
 
     await emit("compose", 74, "composeRenderTool", "Preparing Remotion props.");
 
+    const remotionTemplate = resolveRemotionTemplateById(
+      request.remotionTemplateId
+    );
     let remotionInputProps: AgentCompositionInput;
     const compositionInputPath = path.join(
       timelineDir,
@@ -961,6 +970,8 @@ export class AgentRuntimeService {
         );
         await writeStageOutput("compose", {
           progress: 74,
+          remotionTemplateId: remotionTemplate.id,
+          compositionId: remotionTemplate.compositionId,
           compositionInputPath,
           durationSec: remotionInputProps.durationSec,
           fps: remotionInputProps.fps,
@@ -1009,6 +1020,8 @@ export class AgentRuntimeService {
       );
       await writeStageOutput("compose", {
         progress: 74,
+        remotionTemplateId: remotionTemplate.id,
+        compositionId: remotionTemplate.compositionId,
         compositionInputPath,
         durationSec: remotionInputProps.durationSec,
         fps: remotionInputProps.fps,
@@ -1064,6 +1077,7 @@ export class AgentRuntimeService {
         const renderResult = await this.remotionRenderer.renderAgentVideo({
           jobId,
           outputDir,
+          compositionId: remotionTemplate.compositionId,
           inputProps: remotionInputProps,
           onProgress: async (percent) => {
             const rounded = Math.round(percent);
@@ -1088,6 +1102,8 @@ export class AgentRuntimeService {
         finalVideoPath = renderResult.videoPath;
         await writeStageOutput("render", {
           progress: 84,
+          remotionTemplateId: remotionTemplate.id,
+          compositionId: renderResult.compositionId,
           videoPath: finalVideoPath,
           outputDir,
         });
@@ -1109,6 +1125,7 @@ export class AgentRuntimeService {
       const renderResult = await this.remotionRenderer.renderAgentVideo({
         jobId,
         outputDir,
+        compositionId: remotionTemplate.compositionId,
         inputProps: remotionInputProps,
         onProgress: async (percent) => {
           const rounded = Math.round(percent);
@@ -1133,6 +1150,8 @@ export class AgentRuntimeService {
       finalVideoPath = renderResult.videoPath;
       await writeStageOutput("render", {
         progress: 84,
+        remotionTemplateId: remotionTemplate.id,
+        compositionId: renderResult.compositionId,
         videoPath: finalVideoPath,
         outputDir,
       });
@@ -1162,6 +1181,8 @@ export class AgentRuntimeService {
       scriptLines,
       timeline,
       output: {
+        remotionTemplateId: remotionTemplate.id,
+        compositionId: remotionTemplate.compositionId,
         videoPath: finalVideoPath,
         scriptPath,
         timelinePath,

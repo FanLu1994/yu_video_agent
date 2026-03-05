@@ -1,11 +1,13 @@
 import { chmod, copyFile, mkdir, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { app } from "electron";
+import { resolveRemotionTemplateById } from "@/constants";
 import type { AgentCompositionInput } from "@/remotion/Root";
 import { appLogger } from "@/services/logging/app-logger";
 import { getDataRootPath } from "@/services/storage/runtime-paths";
 
 export interface RenderAgentVideoInput {
+  compositionId?: string;
   inputProps: AgentCompositionInput;
   jobId: string;
   onProgress?: (progressPercent: number) => void | Promise<void>;
@@ -17,7 +19,6 @@ export interface RenderAgentVideoResult {
   videoPath: string;
 }
 
-const DEFAULT_COMPOSITION_ID = "AgentNarration";
 const REMOTION_CHROME_MODE = "headless-shell";
 type RendererModule = typeof import("@remotion/renderer");
 type RemotionBinaryType = "compositor" | "ffmpeg" | "ffprobe";
@@ -189,6 +190,7 @@ export class RemotionRenderService {
   }
 
   async renderAgentVideo({
+    compositionId,
     inputProps,
     jobId,
     onProgress,
@@ -227,6 +229,9 @@ export class RemotionRenderService {
       jobId,
       browserExecutable: browserExecutable ?? "auto",
     });
+    const fallbackTemplate = resolveRemotionTemplateById(undefined);
+    const selectedCompositionId =
+      compositionId || fallbackTemplate.compositionId;
 
     const serveUrl = await bundle({
       entryPoint,
@@ -240,7 +245,7 @@ export class RemotionRenderService {
     });
 
     const composition = await renderer.selectComposition({
-      id: DEFAULT_COMPOSITION_ID,
+      id: selectedCompositionId,
       serveUrl,
       inputProps,
       logLevel: "warn",
@@ -282,7 +287,7 @@ export class RemotionRenderService {
     });
 
     return {
-      compositionId: DEFAULT_COMPOSITION_ID,
+      compositionId: selectedCompositionId,
       videoPath,
     };
   }
