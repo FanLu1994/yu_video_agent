@@ -9,6 +9,7 @@ import type {
   RunAgentJobRequest,
   Stage,
 } from "@/domain/agent/types";
+import { appLogger } from "@/services/logging/app-logger";
 import { JsonFileStore } from "@/services/storage/json-file-store";
 import { getDataRootPath } from "@/services/storage/runtime-paths";
 import type { AgentRuntimeService } from "./agent-runtime.service";
@@ -374,6 +375,24 @@ export class AgentJobService {
       ...prev,
       events: [...prev.events, event],
     }));
+
+    if (type === "job.progress") {
+      appLogger.debug("Agent job event", {
+        eventType: type,
+        jobId,
+        stage: event.stage,
+        progress: event.progress,
+      });
+      return;
+    }
+
+    appLogger.info("Agent job event", {
+      eventType: type,
+      jobId,
+      stage: event.stage,
+      progress: event.progress,
+      message,
+    });
   }
 
   private async updateJob(
@@ -433,6 +452,13 @@ export class AgentJobService {
 
     await this.renumberQueuePositions();
     await this.appendEvent(job.jobId, "job.created", "Job created and queued.");
+    appLogger.info("Agent job queued", {
+      jobId: job.jobId,
+      providerId: request.providerId,
+      model: request.model,
+      articleUrlCount: request.articleUrls.length,
+      localFileCount: request.localFiles.length,
+    });
     void this.runNext();
 
     const saved = await this.getJob(job.jobId);
@@ -518,6 +544,10 @@ export class AgentJobService {
     }
 
     if (job.state !== "queued" && job.state !== "running") {
+      appLogger.warn("Agent job cancel skipped due to terminal state", {
+        jobId,
+        state: job.state,
+      });
       return job;
     }
 
@@ -529,6 +559,10 @@ export class AgentJobService {
     }));
 
     await this.appendEvent(jobId, "job.cancelled", "Job has been cancelled.");
+    appLogger.warn("Agent job cancelled", {
+      jobId,
+      previousState: job.state,
+    });
 
     if (this.runningJobId === jobId) {
       this.runningJobId = undefined;
@@ -551,21 +585,44 @@ export class AgentJobService {
       throw new Error(`Job '${jobId}' not found.`);
     }
 
-    if (job.state !== "failed" && job.state !== "draft_pending_review") {
+    if (
+      job.state !== "failed" &&
+      job.state !== "draft_pending_review" &&
+      job.state !== "cancelled"
+    ) {
+      appLogger.warn(
+        "任务重试被拒绝：仅 failed / draft_pending_review / cancelled 可重试",
+        {
+          jobId,
+          state: job.state,
+        }
+      );
       return job;
     }
 
+    const nextRetryCount = job.retryCount + 1;
+    const resumeFromStage = job.stage;
     await this.updateJob(jobId, (prev) => ({
       ...prev,
       state: "queued",
-      stage: "ingest",
+      stage: resumeFromStage,
       progress: 0,
       queuePosition: 0,
-      retryCount: prev.retryCount + 1,
+      retryCount: nextRetryCount,
       errors: [],
+      request: {
+        ...prev.request,
+        resumeFromStage,
+      },
       updatedAt: new Date().toISOString(),
     }));
     await this.appendEvent(jobId, "job.created", "Job re-queued for retry.");
+    appLogger.info("任务已重新入队，准备断点续跑", {
+      jobId,
+      retryCount: nextRetryCount,
+      previousState: job.state,
+      resumeFromStage,
+    });
     await this.renumberQueuePositions();
     void this.runNext();
 
@@ -579,6 +636,9 @@ export class AgentJobService {
 
   private async runNext() {
     if (this.runningJobId) {
+      appLogger.debug("Agent scheduler skipped runNext because a job is running", {
+        runningJobId: this.runningJobId,
+      });
       return;
     }
 
@@ -588,10 +648,17 @@ export class AgentJobService {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
 
     if (!nextJob) {
+      appLogger.debug("Agent scheduler found no queued jobs");
       return;
     }
 
     this.runningJobId = nextJob.jobId;
+    appLogger.info("Agent job execution started", {
+      jobId: nextJob.jobId,
+      retryCount: nextJob.retryCount,
+      providerId: nextJob.request.providerId,
+      model: nextJob.request.model,
+    });
     await this.updateJob(nextJob.jobId, (job) => ({
       ...job,
       state: "running",
@@ -602,8 +669,17 @@ export class AgentJobService {
     await this.appendEvent(nextJob.jobId, "job.started", "Job started.");
 
     try {
+      appLogger.info("任务执行策略已确定", {
+        jobId: nextJob.jobId,
+        retryCount: nextJob.retryCount,
+        resumeFromStage: nextJob.request.resumeFromStage ?? "ingest",
+        executionMode: nextJob.request.resumeFromStage
+          ? "resume_from_failed_stage"
+          : "full_run",
+      });
       const pipelineResult = await this.runtime.runPipeline({
         jobId: nextJob.jobId,
+        resumeFromStage: nextJob.request.resumeFromStage,
         request: nextJob.request,
         onStageUpdate: async (update) => {
           const currentJob = await this.getJob(nextJob.jobId);
@@ -645,6 +721,12 @@ export class AgentJobService {
           "job.completed",
           "Job completed."
         );
+        appLogger.info("Agent job execution completed", {
+          jobId: nextJob.jobId,
+          warningCount: pipelineResult.warnings.length,
+          outputDir: pipelineResult.artifacts.outputDir,
+          videoPath: pipelineResult.artifacts.videoPath,
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -655,7 +737,14 @@ export class AgentJobService {
         updatedAt: new Date().toISOString(),
       }));
       await this.appendEvent(nextJob.jobId, "job.failed", message);
+      appLogger.error("Agent job execution failed", {
+        jobId: nextJob.jobId,
+        error,
+      });
     } finally {
+      appLogger.debug("Agent job execution finalized", {
+        jobId: nextJob.jobId,
+      });
       this.runningJobId = undefined;
       await this.renumberQueuePositions();
       void this.runNext();

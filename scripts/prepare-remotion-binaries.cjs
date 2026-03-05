@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+"use strict";
 
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -20,7 +21,19 @@ const binaryNames =
     ? ["remotion.exe", "ffmpeg.exe", "ffprobe.exe"]
     : ["remotion", "ffmpeg", "ffprobe"];
 
-async function resolveSourceDir(pkgName) {
+async function resolveArtifactNames(sourceDir) {
+  if (targetPlatform !== "win32") {
+    return binaryNames;
+  }
+
+  const entries = await fs.readdir(sourceDir);
+  const dllNames = entries.filter((name) =>
+    name.toLowerCase().endsWith(".dll")
+  );
+  return [...new Set([...binaryNames, ...dllNames])];
+}
+
+function resolveSourceDir(pkgName) {
   const pkgJsonPath = require.resolve(`${pkgName}/package.json`, {
     paths: [process.cwd()],
   });
@@ -43,7 +56,7 @@ async function main() {
     );
   }
 
-  const sourceDir = await resolveSourceDir(packageName);
+  const sourceDir = resolveSourceDir(packageName);
   const targetDir = path.resolve(
     process.cwd(),
     "resources",
@@ -53,7 +66,9 @@ async function main() {
 
   await fs.mkdir(targetDir, { recursive: true });
 
-  for (const fileName of binaryNames) {
+  const artifactNames = await resolveArtifactNames(sourceDir);
+
+  for (const fileName of artifactNames) {
     const sourcePath = path.join(sourceDir, fileName);
     const targetPath = path.join(targetDir, fileName);
     await assertFileExists(sourcePath);
@@ -62,7 +77,7 @@ async function main() {
 
   // eslint-disable-next-line no-console
   console.log(
-    `[prepare-remotion-binaries] Prepared ${binaryNames.length} binaries in ${targetDir}`
+    `[prepare-remotion-binaries] Prepared ${artifactNames.length} artifacts in ${targetDir}`
   );
 }
 
@@ -71,4 +86,3 @@ main().catch((error) => {
   console.error("[prepare-remotion-binaries] Failed:", error);
   process.exitCode = 1;
 });
-

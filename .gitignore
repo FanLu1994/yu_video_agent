@@ -107,6 +107,8 @@ out/
 .pnpm-store/
 .pnpm-store-temp/
 resources/remotion-binaries/
+resources/chrome-headless-shell-win64/
+.tmp-start.log
 
 # IDE
 .idea/

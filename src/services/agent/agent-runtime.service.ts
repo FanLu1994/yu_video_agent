@@ -9,6 +9,7 @@ import type {
   Stage,
 } from "@/domain/agent/types";
 import type { AgentCompositionInput } from "@/remotion/Root";
+import { appLogger } from "@/services/logging/app-logger";
 import { buildPiModel } from "@/services/provider/pi-model";
 import type { ProviderConfigService } from "@/services/provider/provider-config.service";
 import { getDataRootPath } from "@/services/storage/runtime-paths";
@@ -106,11 +107,24 @@ export class AgentRuntimeService {
       .trim();
   }
 
+  private previewText(value: string, maxLength = 280) {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+
+    return `${normalized.slice(0, maxLength)}...`;
+  }
+
   private async appendPipelineLog(logPath: string, line: string) {
     await mkdir(path.dirname(logPath), { recursive: true });
     await writeFile(logPath, `[${new Date().toISOString()}] ${line}\n`, {
       encoding: "utf-8",
       flag: "a",
+    });
+    appLogger.debug("Agent pipeline file log appended", {
+      logPath,
+      line,
     });
   }
 
@@ -260,23 +274,51 @@ export class AgentRuntimeService {
   private async callLlm(
     request: RunAgentJobRequest,
     systemPrompt: string,
-    userPrompt: string
+    userPrompt: string,
+    context: {
+      jobId: string;
+      stage: Stage;
+      purpose: string;
+    }
   ): Promise<string | undefined> {
     const provider = await this.providers.getProviderById(request.providerId);
     if (!(provider && provider.enabled)) {
+      appLogger.warn("LLM 请求未执行：Provider 不可用或未启用", {
+        jobId: context.jobId,
+        stage: context.stage,
+        providerId: request.providerId,
+      });
       return undefined;
     }
 
     const apiKey = await this.providers.getApiKey(request.providerId);
     if (!apiKey) {
+      appLogger.warn("LLM 请求未执行：缺少 API Key", {
+        jobId: context.jobId,
+        stage: context.stage,
+        providerId: request.providerId,
+      });
       return undefined;
     }
+
+    appLogger.info("LLM 请求", {
+      jobId: context.jobId,
+      stage: context.stage,
+      purpose: context.purpose,
+      providerId: request.providerId,
+      model: request.model || provider.model,
+      temperature: request.runtimeConfig?.temperature ?? 0.5,
+      maxTokens: request.runtimeConfig?.maxOutputTokens ?? 1400,
+      systemPromptPreview: this.previewText(systemPrompt),
+      userPromptPreview: this.previewText(userPrompt, 600),
+    });
 
     const { completeSimple } = await import("@mariozechner/pi-ai");
     const model = buildPiModel({
       ...provider,
       model: request.model || provider.model,
     });
+    const startedAt = Date.now();
     const response = await completeSimple(
       model,
       {
@@ -301,6 +343,15 @@ export class AgentRuntimeService {
       .map((item) => ("text" in item ? item.text : ""))
       .join("\n")
       .trim();
+
+    appLogger.info("LLM 响应", {
+      jobId: context.jobId,
+      stage: context.stage,
+      purpose: context.purpose,
+      durationMs: Date.now() - startedAt,
+      outputLength: textParts.length,
+      outputPreview: this.previewText(textParts),
+    });
 
     return textParts || undefined;
   }
@@ -339,16 +390,16 @@ export class AgentRuntimeService {
     input: RuntimePipelineInput
   ): Promise<RuntimePipelineResult> {
     const { jobId, onStageUpdate, request, resumeFromStage } = input;
-    console.log(`[AGENT] Pipeline started for job ${jobId}`);
-    console.log(`[AGENT] Resume from stage: ${resumeFromStage ?? "从头开始"}`);
-    console.log(`[AGENT] Request:`, {
+    appLogger.info("Agent pipeline started", {
+      jobId,
+      resumeFromStage: resumeFromStage ?? null,
       providerId: request.providerId,
       model: request.model,
       voiceId: request.voiceId,
       voiceProviderId: request.voiceProviderId,
       voiceModel: request.voiceModel,
-      articleUrls: request.articleUrls,
-      localFiles: request.localFiles,
+      articleUrlCount: request.articleUrls.length,
+      localFileCount: request.localFiles.length,
     });
     await this.initialize();
 
@@ -363,8 +414,24 @@ export class AgentRuntimeService {
       "package",
     ];
 
-    const resumeIndex = resumeFromStage ? stagesOrder.indexOf(resumeFromStage) : -1;
-    console.log(`[AGENT] Resume stage index: ${resumeIndex} (-1 means start from beginning)`);
+    const resumeIndex = resumeFromStage
+      ? stagesOrder.indexOf(resumeFromStage)
+      : -1;
+    appLogger.info("流程恢复策略已解析", {
+      jobId,
+      resumeFromStage: resumeFromStage ?? null,
+      resumeIndex,
+    });
+    if (resumeIndex === -1) {
+      appLogger.info("流程执行模式：全量执行（从 ingest 开始，不跳过阶段）", {
+        jobId,
+      });
+    } else {
+      appLogger.info("流程执行模式：断点续跑（早于 resumeFromStage 的阶段将尝试跳过）", {
+        jobId,
+        resumeFromStage,
+      });
+    }
 
     const shouldSkipStage = async (stage: Stage): Promise<boolean> => {
       if (resumeIndex === -1) {
@@ -372,9 +439,18 @@ export class AgentRuntimeService {
       }
       const stageIndex = stagesOrder.indexOf(stage);
       if (stageIndex < resumeIndex) {
-        console.log(`[AGENT] Skipping stage ${stage} (already completed)`);
+        appLogger.info("阶段跳过：该阶段早于 resumeFromStage，使用历史结果", {
+          jobId,
+          stage,
+          resumeFromStage,
+        });
         return true;
       }
+      appLogger.debug("阶段不跳过：该阶段位于 resumeFromStage 及之后", {
+        jobId,
+        stage,
+        resumeFromStage,
+      });
       return false;
     };
 
@@ -393,6 +469,7 @@ export class AgentRuntimeService {
       mkdir(timelineDir, { recursive: true }),
       mkdir(logsDir, { recursive: true }),
     ]);
+    const warnings: JobWarning[] = [];
 
     const writeStageOutput = async (
       stage: Stage,
@@ -427,6 +504,12 @@ export class AgentRuntimeService {
         progress,
         currentTool,
       });
+      appLogger.debug("Agent pipeline stage update", {
+        jobId,
+        stage,
+        progress,
+        currentTool,
+      });
       if (logLine) {
         await this.appendPipelineLog(pipelineLogPath, logLine);
       }
@@ -436,13 +519,27 @@ export class AgentRuntimeService {
 
     let sources: IngestedSource[];
     const sourcesPath = path.join(researchDir, "sources.json");
+    appLogger.info("阶段请求：ingest", {
+      jobId,
+      localFiles: request.localFiles,
+      articleUrls: request.articleUrls,
+      maxResearchSources: request.runtimeConfig?.maxResearchSources ?? 6,
+    });
     if (await shouldSkipStage("ingest")) {
       try {
         const sourcesData = await readFile(sourcesPath, "utf-8");
         sources = JSON.parse(sourcesData);
-        console.log(`[AGENT] Loaded cached sources: ${sources.length} items`);
+        appLogger.info("阶段结果：ingest", {
+          jobId,
+          reusedCache: true,
+          sourceCount: sources.length,
+          sourcePreview: sources.slice(0, 8).map((item) => item.source),
+        });
       } catch {
-        console.log(`[AGENT] Failed to load cached sources, re-running ingest`);
+        appLogger.warn("ingest 缓存不可用，自动重新执行", {
+          jobId,
+          sourcesPath,
+        });
         sources = await this.ingestSources(
           request,
           request.runtimeConfig?.maxResearchSources ?? 6,
@@ -467,6 +564,13 @@ export class AgentRuntimeService {
         source: item.source,
       })),
     });
+    appLogger.info("阶段结果：ingest", {
+      jobId,
+      reusedCache: false,
+      sourceCount: sources.length,
+      sourcePreview: sources.slice(0, 8).map((item) => item.source),
+      sourcesPath,
+    });
 
     const mergedSourceText = sources
       .map((item, index) => {
@@ -480,86 +584,200 @@ export class AgentRuntimeService {
     const topicSourceText =
       mergedSourceText ||
       "未读取到可用输入资料，请仅根据用户任务信息生成主题。";
-    let topic: string;
-    try {
-      topic =
-        (await this.callLlm(
-          request,
-          request.prompts?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-          `${topicPrompt}\n\n以下是输入资料：\n${topicSourceText}`
-        )) ?? this.buildFallbackTopic(request);
-    } catch {
-      topic = this.buildFallbackTopic(request);
-      warnings.push({
-        code: "TOPIC_FALLBACK",
-        message: "Topic generation fallback to local heuristic.",
+    let topic = "";
+    const generateTopic = async () => {
+      appLogger.info("阶段请求：topic", {
+        jobId,
+        sourceCount: sources.length,
+        promptPreview: this.previewText(topicPrompt),
       });
+      try {
+        topic =
+          (await this.callLlm(
+            request,
+            request.prompts?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+            `${topicPrompt}\n\n以下是输入资料：\n${topicSourceText}`,
+            {
+              jobId,
+              stage: "topic",
+              purpose: "generate_topic",
+            }
+          )) ?? this.buildFallbackTopic(request);
+      } catch {
+        topic = this.buildFallbackTopic(request);
+        warnings.push({
+          code: "TOPIC_FALLBACK",
+          message: "Topic generation fallback to local heuristic.",
+        });
+      }
+      topic = this.normalizeWhitespace(topic).slice(0, 56);
+      if (!topic) {
+        topic = this.buildFallbackTopic(request);
+      }
+      await writeStageOutput("topic", {
+        progress: 18,
+        topic,
+        sourceCount: sources.length,
+        prompt: topicPrompt,
+      });
+      appLogger.info("阶段结果：topic", {
+        jobId,
+        reusedCache: false,
+        topic,
+      });
+    };
+
+    if (await shouldSkipStage("topic")) {
+      const topicStagePath = path.join(stagesDir, "topic.json");
+      try {
+        const topicStageRaw = await readFile(topicStagePath, "utf-8");
+        const topicStage = JSON.parse(topicStageRaw) as Record<string, unknown>;
+        const cachedTopic =
+          typeof topicStage.topic === "string" ? topicStage.topic.trim() : "";
+        if (!cachedTopic) {
+          throw new Error("cached topic is empty");
+        }
+        topic = this.normalizeWhitespace(cachedTopic).slice(0, 56);
+        appLogger.info("阶段结果：topic", {
+          jobId,
+          reusedCache: true,
+          topic,
+        });
+      } catch {
+        appLogger.warn("topic 缓存不可用，自动重新执行", {
+          jobId,
+          topicStagePath,
+        });
+        await generateTopic();
+      }
+    } else {
+      await generateTopic();
     }
-    topic = this.normalizeWhitespace(topic).slice(0, 56);
-    if (!topic) {
-      topic = this.buildFallbackTopic(request);
-    }
-    await writeStageOutput("topic", {
-      progress: 18,
-      topic,
-      sourceCount: sources.length,
-      prompt: topicPrompt,
-    });
 
     await emit("research", 30, "researchTool", `Topic=${topic}`);
 
     const researchSummaryPath = path.join(researchDir, "summary.json");
-    const researchNotes = {
-      topic,
-      sourceCount: sources.length,
-      generatedAt: new Date().toISOString(),
-    };
-    await writeFile(
-      researchSummaryPath,
-      JSON.stringify(researchNotes, null, 2),
-      "utf-8"
-    );
-    await writeStageOutput("research", {
-      progress: 30,
-      summaryPath: researchSummaryPath,
-      summary: researchNotes,
-    });
+    if (await shouldSkipStage("research")) {
+      appLogger.info("阶段结果：research", {
+        jobId,
+        reusedCache: true,
+        summaryPath: researchSummaryPath,
+      });
+    } else {
+      appLogger.info("阶段请求：research", {
+        jobId,
+        topic,
+        sourceCount: sources.length,
+      });
+      const researchNotes = {
+        topic,
+        sourceCount: sources.length,
+        generatedAt: new Date().toISOString(),
+      };
+      await writeFile(
+        researchSummaryPath,
+        JSON.stringify(researchNotes, null, 2),
+        "utf-8"
+      );
+      await writeStageOutput("research", {
+        progress: 30,
+        summaryPath: researchSummaryPath,
+        summary: researchNotes,
+      });
+      appLogger.info("阶段结果：research", {
+        jobId,
+        reusedCache: false,
+        summaryPath: researchSummaryPath,
+      });
+    }
 
     await emit("script", 50, "scriptTool", "Generating script.");
 
     const scriptPrompt = request.prompts?.scriptPrompt ?? DEFAULT_SCRIPT_PROMPT;
     let scriptText: string;
-    try {
-      scriptText =
-        (await this.callLlm(
-          request,
-          request.prompts?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-          [
-            `任务主题：${topic}`,
-            scriptPrompt,
-            "",
-            "以下是资料摘要：",
-            topicSourceText,
-          ].join("\n")
-        )) ?? this.buildFallbackScript(topic, sources);
-    } catch {
-      scriptText = this.buildFallbackScript(topic, sources);
-      warnings.push({
-        code: "SCRIPT_FALLBACK",
-        message: "Script generation fallback to local template.",
-      });
-    }
-
-    const normalizedScript = scriptText.trim();
     const scriptPath = path.join(scriptDir, "script.md");
-    await writeFile(scriptPath, `# ${topic}\n\n${normalizedScript}\n`, "utf-8");
-    const scriptLines = this.splitIntoScriptLines(normalizedScript);
-    await writeStageOutput("script", {
-      progress: 50,
-      scriptPath,
-      lineCount: scriptLines.length,
-      topic,
-    });
+    let scriptLines: string[] = [];
+    const generateScript = async () => {
+      appLogger.info("阶段请求：script", {
+        jobId,
+        topic,
+        sourceCount: sources.length,
+        promptPreview: this.previewText(scriptPrompt),
+      });
+      try {
+        scriptText =
+          (await this.callLlm(
+            request,
+            request.prompts?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+            [
+              `任务主题：${topic}`,
+              scriptPrompt,
+              "",
+              "以下是资料摘要：",
+              topicSourceText,
+            ].join("\n"),
+            {
+              jobId,
+              stage: "script",
+              purpose: "generate_script",
+            }
+          )) ?? this.buildFallbackScript(topic, sources);
+      } catch {
+        scriptText = this.buildFallbackScript(topic, sources);
+        warnings.push({
+          code: "SCRIPT_FALLBACK",
+          message: "Script generation fallback to local template.",
+        });
+      }
+
+      const normalizedScript = scriptText.trim();
+      await writeFile(scriptPath, `# ${topic}\n\n${normalizedScript}\n`, "utf-8");
+      scriptLines = this.splitIntoScriptLines(normalizedScript);
+      await writeStageOutput("script", {
+        progress: 50,
+        scriptPath,
+        lineCount: scriptLines.length,
+        topic,
+      });
+      appLogger.info("阶段结果：script", {
+        jobId,
+        reusedCache: false,
+        scriptPath,
+        lineCount: scriptLines.length,
+        scriptPreview: scriptLines.slice(0, 3),
+      });
+    };
+
+    if (await shouldSkipStage("script")) {
+      const scriptStagePath = path.join(stagesDir, "script.json");
+      try {
+        const scriptStageRaw = await readFile(scriptStagePath, "utf-8");
+        const scriptStage = JSON.parse(scriptStageRaw) as Record<string, unknown>;
+        const cachedScriptPath =
+          typeof scriptStage.scriptPath === "string" &&
+          scriptStage.scriptPath.trim().length > 0
+            ? scriptStage.scriptPath
+            : scriptPath;
+        const cachedRaw = await readFile(cachedScriptPath, "utf-8");
+        scriptText = cachedRaw.replace(/^#.*\r?\n+/u, "").trim();
+        scriptLines = this.splitIntoScriptLines(scriptText);
+        appLogger.info("阶段结果：script", {
+          jobId,
+          reusedCache: true,
+          scriptPath: cachedScriptPath,
+          lineCount: scriptLines.length,
+          scriptPreview: scriptLines.slice(0, 3),
+        });
+      } catch {
+        appLogger.warn("script 缓存不可用，自动重新执行", {
+          jobId,
+          scriptStagePath,
+        });
+        await generateScript();
+      }
+    } else {
+      await generateScript();
+    }
 
     await emit(
       "voice_clone",
@@ -569,132 +787,372 @@ export class AgentRuntimeService {
         ? `Voice clone selected voiceId=${request.voiceId}`
         : "Voice clone skipped (no voiceId)."
     );
-    console.log(`[AGENT] Voice clone stage started. voiceId: ${request.voiceId}`);
 
     let generatedAudioPath: string | undefined;
-    if (request.voiceId) {
-      console.log(`[AGENT] Starting voice synthesis for voiceId=${request.voiceId}`);
-      try {
-        const scriptText = scriptLines.join("\n");
-        console.log(`[AGENT] Script to synthesize:`, scriptText);
-        const { previewAudioUrl } =
-          await this.voiceCloneService.synthesizePreviewVoice(
-            request.voiceId,
-            scriptText
+    const runVoiceClone = async () => {
+      appLogger.info("阶段请求：voice_clone", {
+        jobId,
+        voiceId: request.voiceId ?? null,
+        voiceProviderId: request.voiceProviderId ?? null,
+        voiceModel: request.voiceModel ?? null,
+        scriptLineCount: scriptLines.length,
+      });
+      if (request.voiceId) {
+        try {
+          const scriptText = scriptLines.join("\n");
+          const { previewAudioUrl } =
+            await this.voiceCloneService.synthesizePreviewVoice(
+              request.voiceId,
+              scriptText
+            );
+          const audioDir = path.join(outputDir, "audio");
+          await mkdir(audioDir, { recursive: true });
+          const previewAudioPath = fileURLToPath(previewAudioUrl);
+          const ext = path.extname(previewAudioPath).trim() || ".mp3";
+          const audioFileName = `${request.voiceId}_audio${ext}`;
+          generatedAudioPath = path.join(audioDir, audioFileName);
+          const { copyFile } = await import("node:fs/promises");
+          await copyFile(previewAudioPath, generatedAudioPath);
+          await this.appendPipelineLog(
+            pipelineLogPath,
+            `voice_clone.generated path=${generatedAudioPath}`
           );
-        console.log(`[AGENT] Voice synthesis completed. previewAudioUrl: ${previewAudioUrl}`);
-        const audioDir = path.join(outputDir, "audio");
-        await mkdir(audioDir, { recursive: true });
-        const previewAudioPath = fileURLToPath(previewAudioUrl);
-        console.log(`[AGENT] Converting URL to path: ${previewAudioUrl} -> ${previewAudioPath}`);
-        const ext = path.extname(previewAudioPath).trim() || ".mp3";
-        const audioFileName = `${request.voiceId}_audio${ext}`;
-        generatedAudioPath = path.join(audioDir, audioFileName);
-        console.log(`[AGENT] Copying audio from ${previewAudioPath} to ${generatedAudioPath}`);
-        const { copyFile } = await import("node:fs/promises");
-        await copyFile(previewAudioPath, generatedAudioPath);
-        console.log(`[AGENT] Audio copied successfully: ${generatedAudioPath}`);
-        await this.appendPipelineLog(
-          pipelineLogPath,
-          `voice_clone.generated path=${generatedAudioPath}`
-        );
-        await this.appendPipelineLog(
-          pipelineLogPath,
-          `voice_clone.generated path=${generatedAudioPath}`
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await this.appendPipelineLog(
-          pipelineLogPath,
-          `voice_clone.failed error=${message}`
-        );
-        warnings.push({
-          code: "VOICE_CLONE_FAILED",
-          message: `Voice synthesis failed: ${message}`,
+          appLogger.info("阶段结果：voice_clone", {
+            jobId,
+            reusedCache: false,
+            status: "generated",
+            previewAudioUrl,
+            generatedAudioPath,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await this.appendPipelineLog(
+            pipelineLogPath,
+            `voice_clone.failed error=${message}`
+          );
+          warnings.push({
+            code: "VOICE_CLONE_FAILED",
+            message: `Voice synthesis failed: ${message}`,
+          });
+          appLogger.warn("阶段结果：voice_clone", {
+            jobId,
+            reusedCache: false,
+            status: "failed",
+            error: message,
+          });
+        }
+      } else {
+        appLogger.info("阶段结果：voice_clone", {
+          jobId,
+          reusedCache: false,
+          status: "skipped_no_voice_id",
         });
       }
-    }
 
-    await writeStageOutput("voice_clone", {
-      progress: 62,
-      status: request.voiceId ? "selected" : "skipped",
-      voiceId: request.voiceId ?? null,
-      voiceProviderId: request.voiceProviderId ?? null,
-      voiceModel: request.voiceModel ?? null,
-      audioPath: generatedAudioPath,
-    });
+      await writeStageOutput("voice_clone", {
+        progress: 62,
+        status: request.voiceId ? "selected" : "skipped",
+        voiceId: request.voiceId ?? null,
+        voiceProviderId: request.voiceProviderId ?? null,
+        voiceModel: request.voiceModel ?? null,
+        audioPath: generatedAudioPath,
+      });
+    };
+
+    if (await shouldSkipStage("voice_clone")) {
+      const voiceStagePath = path.join(stagesDir, "voice_clone.json");
+      try {
+        const voiceStageRaw = await readFile(voiceStagePath, "utf-8");
+        const voiceStage = JSON.parse(voiceStageRaw) as Record<string, unknown>;
+        const cachedAudioPath =
+          typeof voiceStage.audioPath === "string" &&
+          voiceStage.audioPath.trim().length > 0
+            ? voiceStage.audioPath
+            : undefined;
+
+        if (request.voiceId && !cachedAudioPath) {
+          throw new Error("cached voice audio not found");
+        }
+
+        generatedAudioPath = cachedAudioPath;
+        appLogger.info("阶段结果：voice_clone", {
+          jobId,
+          reusedCache: true,
+          status: request.voiceId ? "reused_cached_audio" : "reused_skip_status",
+          audioPath: generatedAudioPath ?? null,
+        });
+      } catch {
+        appLogger.warn("voice_clone 缓存不可用，自动重新执行", {
+          jobId,
+          voiceStagePath,
+        });
+        await runVoiceClone();
+      }
+    } else {
+      await runVoiceClone();
+    }
 
     await emit("compose", 74, "composeRenderTool", "Preparing Remotion props.");
 
-    const palette = this.resolveRemotionPalette(request.remotionConfig);
-    const remotionInputProps: AgentCompositionInput = {
-      title: topic,
-      subtitle:
-        request.voiceId && request.voiceProviderId
-          ? `Voice: ${request.voiceId} (${request.voiceProviderId})`
-          : "Voice: default narration",
-      scriptLines,
-      accentColor: palette.accentColor,
-      backgroundStartColor: palette.backgroundStartColor,
-      backgroundEndColor: palette.backgroundEndColor,
-      durationSec: this.resolveTargetDurationSec(request, scriptLines.length),
-      fps: request.remotionConfig?.fps ?? 30,
-      width: request.remotionConfig?.width ?? 1920,
-      height: request.remotionConfig?.height ?? 1080,
-      audioPath: generatedAudioPath,
-    };
+    let remotionInputProps: AgentCompositionInput;
     const compositionInputPath = path.join(
       timelineDir,
       "composition-input.json"
     );
-    await writeFile(
-      compositionInputPath,
-      JSON.stringify(remotionInputProps, null, 2),
-      "utf-8"
-    );
-    await writeStageOutput("compose", {
-      progress: 74,
-      compositionInputPath,
-      durationSec: remotionInputProps.durationSec,
-      fps: remotionInputProps.fps,
-      width: remotionInputProps.width,
-      height: remotionInputProps.height,
-    });
+    const composeStagePath = path.join(stagesDir, "compose.json");
+    if (await shouldSkipStage("compose")) {
+      try {
+        const composeStageRaw = await readFile(composeStagePath, "utf-8");
+        const composeStage = JSON.parse(composeStageRaw) as Record<string, unknown>;
+        const cachedCompositionInputPath =
+          typeof composeStage.compositionInputPath === "string" &&
+          composeStage.compositionInputPath.trim().length > 0
+            ? composeStage.compositionInputPath
+            : compositionInputPath;
+        const cachedPropsRaw = await readFile(cachedCompositionInputPath, "utf-8");
+        remotionInputProps = JSON.parse(cachedPropsRaw) as AgentCompositionInput;
+        scriptLines = remotionInputProps.scriptLines;
+        if (!generatedAudioPath && remotionInputProps.audioPath) {
+          generatedAudioPath = remotionInputProps.audioPath;
+        }
+        appLogger.info("阶段结果：compose", {
+          jobId,
+          reusedCache: true,
+          compositionInputPath: cachedCompositionInputPath,
+          lineCount: scriptLines.length,
+          audioPath: generatedAudioPath ?? null,
+        });
+      } catch {
+        appLogger.warn("compose 缓存不可用，自动重新执行", {
+          jobId,
+          composeStagePath,
+        });
+        const palette = this.resolveRemotionPalette(request.remotionConfig);
+        remotionInputProps = {
+          title: topic,
+          subtitle:
+            request.voiceId && request.voiceProviderId
+              ? `Voice: ${request.voiceId} (${request.voiceProviderId})`
+              : "Voice: default narration",
+          scriptLines,
+          accentColor: palette.accentColor,
+          backgroundStartColor: palette.backgroundStartColor,
+          backgroundEndColor: palette.backgroundEndColor,
+          durationSec: this.resolveTargetDurationSec(request, scriptLines.length),
+          fps: request.remotionConfig?.fps ?? 30,
+          width: request.remotionConfig?.width ?? 1920,
+          height: request.remotionConfig?.height ?? 1080,
+          audioPath: generatedAudioPath,
+        };
+        appLogger.info("阶段请求：compose", {
+          jobId,
+          title: remotionInputProps.title,
+          lineCount: remotionInputProps.scriptLines.length,
+          durationSec: remotionInputProps.durationSec,
+          fps: remotionInputProps.fps,
+          width: remotionInputProps.width,
+          height: remotionInputProps.height,
+          audioPath: remotionInputProps.audioPath ?? null,
+        });
+        await writeFile(
+          compositionInputPath,
+          JSON.stringify(remotionInputProps, null, 2),
+          "utf-8"
+        );
+        await writeStageOutput("compose", {
+          progress: 74,
+          compositionInputPath,
+          durationSec: remotionInputProps.durationSec,
+          fps: remotionInputProps.fps,
+          width: remotionInputProps.width,
+          height: remotionInputProps.height,
+        });
+        appLogger.info("阶段结果：compose", {
+          jobId,
+          reusedCache: false,
+          compositionInputPath,
+          lineCount: remotionInputProps.scriptLines.length,
+        });
+      }
+    } else {
+      const palette = this.resolveRemotionPalette(request.remotionConfig);
+      remotionInputProps = {
+        title: topic,
+        subtitle:
+          request.voiceId && request.voiceProviderId
+            ? `Voice: ${request.voiceId} (${request.voiceProviderId})`
+            : "Voice: default narration",
+        scriptLines,
+        accentColor: palette.accentColor,
+        backgroundStartColor: palette.backgroundStartColor,
+        backgroundEndColor: palette.backgroundEndColor,
+        durationSec: this.resolveTargetDurationSec(request, scriptLines.length),
+        fps: request.remotionConfig?.fps ?? 30,
+        width: request.remotionConfig?.width ?? 1920,
+        height: request.remotionConfig?.height ?? 1080,
+        audioPath: generatedAudioPath,
+      };
+      appLogger.info("阶段请求：compose", {
+        jobId,
+        title: remotionInputProps.title,
+        lineCount: remotionInputProps.scriptLines.length,
+        durationSec: remotionInputProps.durationSec,
+        fps: remotionInputProps.fps,
+        width: remotionInputProps.width,
+        height: remotionInputProps.height,
+        audioPath: remotionInputProps.audioPath ?? null,
+      });
+      await writeFile(
+        compositionInputPath,
+        JSON.stringify(remotionInputProps, null, 2),
+        "utf-8"
+      );
+      await writeStageOutput("compose", {
+        progress: 74,
+        compositionInputPath,
+        durationSec: remotionInputProps.durationSec,
+        fps: remotionInputProps.fps,
+        width: remotionInputProps.width,
+        height: remotionInputProps.height,
+      });
+      appLogger.info("阶段结果：compose", {
+        jobId,
+        reusedCache: false,
+        compositionInputPath,
+        lineCount: remotionInputProps.scriptLines.length,
+      });
+    }
 
     const timeline = this.createTimeline(scriptLines);
     const timelinePath = path.join(timelineDir, "timestamps.json");
     await writeFile(timelinePath, JSON.stringify(timeline, null, 2), "utf-8");
 
     await emit("render", 84, "remotionRenderTool", "Rendering video.");
-    console.log(`[AGENT] Render stage started. inputProps:`, {
-      title: remotionInputProps.title,
-      scriptLines: remotionInputProps.scriptLines.length,
-      durationSec: remotionInputProps.durationSec,
-      audioPath: remotionInputProps.audioPath,
-    });
-    const renderResult = await this.remotionRenderer.renderAgentVideo({
-      jobId,
-      outputDir,
-      inputProps: remotionInputProps,
-      onProgress: async (percent) => {
-        console.log(`[AGENT] Render progress: ${percent}%`);
-        if (percent >= 95) {
-          await this.appendPipelineLog(
-            pipelineLogPath,
-            `render.progress=${percent}%`
-          );
+    let finalVideoPath: string;
+    if (await shouldSkipStage("render")) {
+      const renderStagePath = path.join(stagesDir, "render.json");
+      try {
+        const renderStageRaw = await readFile(renderStagePath, "utf-8");
+        const renderStage = JSON.parse(renderStageRaw) as Record<string, unknown>;
+        const cachedVideoPath =
+          typeof renderStage.videoPath === "string" &&
+          renderStage.videoPath.trim().length > 0
+            ? renderStage.videoPath
+            : undefined;
+        if (!cachedVideoPath) {
+          throw new Error("cached video path missing");
         }
-      },
-    });
-    console.log(`[AGENT] Render completed. videoPath: ${renderResult.videoPath}`);
-    await writeStageOutput("render", {
-      progress: 84,
-      videoPath: renderResult.videoPath,
-      outputDir,
-    });
+        finalVideoPath = cachedVideoPath;
+        appLogger.info("阶段结果：render", {
+          jobId,
+          reusedCache: true,
+          videoPath: finalVideoPath,
+        });
+      } catch {
+        appLogger.warn("render 缓存不可用，自动重新执行", {
+          jobId,
+          renderStagePath,
+        });
+        appLogger.info("阶段请求：render", {
+          jobId,
+          title: remotionInputProps.title,
+          scriptLines: remotionInputProps.scriptLines.length,
+          durationSec: remotionInputProps.durationSec,
+          audioPath: remotionInputProps.audioPath ?? null,
+        });
+        let lastLoggedRenderPercent = -1;
+        const renderResult = await this.remotionRenderer.renderAgentVideo({
+          jobId,
+          outputDir,
+          inputProps: remotionInputProps,
+          onProgress: async (percent) => {
+            const rounded = Math.round(percent);
+            if (
+              rounded !== lastLoggedRenderPercent &&
+              (rounded % 10 === 0 || rounded >= 95)
+            ) {
+              lastLoggedRenderPercent = rounded;
+              appLogger.info("阶段结果：render-progress", {
+                jobId,
+                percent: rounded,
+              });
+            }
+            if (percent >= 95) {
+              await this.appendPipelineLog(
+                pipelineLogPath,
+                `render.progress=${percent}%`
+              );
+            }
+          },
+        });
+        finalVideoPath = renderResult.videoPath;
+        await writeStageOutput("render", {
+          progress: 84,
+          videoPath: finalVideoPath,
+          outputDir,
+        });
+        appLogger.info("阶段结果：render", {
+          jobId,
+          reusedCache: false,
+          videoPath: finalVideoPath,
+        });
+      }
+    } else {
+      appLogger.info("阶段请求：render", {
+        jobId,
+        title: remotionInputProps.title,
+        scriptLines: remotionInputProps.scriptLines.length,
+        durationSec: remotionInputProps.durationSec,
+        audioPath: remotionInputProps.audioPath ?? null,
+      });
+      let lastLoggedRenderPercent = -1;
+      const renderResult = await this.remotionRenderer.renderAgentVideo({
+        jobId,
+        outputDir,
+        inputProps: remotionInputProps,
+        onProgress: async (percent) => {
+          const rounded = Math.round(percent);
+          if (
+            rounded !== lastLoggedRenderPercent &&
+            (rounded % 10 === 0 || rounded >= 95)
+          ) {
+            lastLoggedRenderPercent = rounded;
+            appLogger.info("阶段结果：render-progress", {
+              jobId,
+              percent: rounded,
+            });
+          }
+          if (percent >= 95) {
+            await this.appendPipelineLog(
+              pipelineLogPath,
+              `render.progress=${percent}%`
+            );
+          }
+        },
+      });
+      finalVideoPath = renderResult.videoPath;
+      await writeStageOutput("render", {
+        progress: 84,
+        videoPath: finalVideoPath,
+        outputDir,
+      });
+      appLogger.info("阶段结果：render", {
+        jobId,
+        reusedCache: false,
+        videoPath: finalVideoPath,
+      });
+    }
 
     await emit("package", 96, "packageTool", "Creating manifest.");
     const manifestPath = path.join(outputDir, "manifest.json");
+    appLogger.info("阶段请求：package", {
+      jobId,
+      videoPath: finalVideoPath,
+      scriptPath,
+      timelinePath,
+      audioPath: generatedAudioPath ?? null,
+      warningCount: warnings.length,
+    });
     const manifest = {
       jobId,
       stage: "completed",
@@ -704,7 +1162,7 @@ export class AgentRuntimeService {
       scriptLines,
       timeline,
       output: {
-        videoPath: renderResult.videoPath,
+        videoPath: finalVideoPath,
         scriptPath,
         timelinePath,
         pipelineLogPath,
@@ -722,9 +1180,14 @@ export class AgentRuntimeService {
       pipelineLogPath,
       warningCount: warnings.length,
     });
-    console.log(`[AGENT] Pipeline completed successfully.`);
-    console.log(`[AGENT] Final artifacts:`, {
-      videoPath: renderResult.videoPath,
+    appLogger.info("阶段结果：package", {
+      jobId,
+      manifestPath,
+      warningCount: warnings.length,
+    });
+    appLogger.info("Agent pipeline completed", {
+      jobId,
+      videoPath: finalVideoPath,
       audioPath: generatedAudioPath,
       scriptPath,
       manifestPath,
@@ -738,7 +1201,7 @@ export class AgentRuntimeService {
         compositionInputPath,
         outputDir,
         manifestPath,
-        videoPath: renderResult.videoPath,
+        videoPath: finalVideoPath,
         scriptPath,
         stageOutputDir: stagesDir,
         timelinePath,

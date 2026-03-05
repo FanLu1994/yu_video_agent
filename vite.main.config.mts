@@ -8,7 +8,19 @@ export default defineConfig({
       "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
+  // Speed up dependency pre-bundling
+  optimizeDeps: {
+    exclude: [
+      "@remotion/bundler",
+      "@remotion/renderer",
+      "remotion",
+      "electron",
+    ],
+  },
   build: {
+    // Optimize build for faster rebuilds
+    minify: false, // Skip minification in dev for faster builds
+    target: "node18", // Don't transpile too much
     rollupOptions: {
       // Keep ws optional native deps as runtime requires so ws can fall back to JS implementation.
       external: [
@@ -17,7 +29,12 @@ export default defineConfig({
         "@remotion/bundler",
         "@remotion/renderer",
         "remotion",
+        "electron",
       ],
+      // Improve treeshaking
+      treeshake: {
+        moduleSideEffects: false,
+      },
     },
   },
 });

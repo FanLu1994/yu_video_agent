@@ -66,6 +66,12 @@ const JOB_STATE_ORDER: JobState[] = [
   "cancelled",
 ];
 
+const RETRYABLE_STATES: JobState[] = [
+  "failed",
+  "draft_pending_review",
+  "cancelled",
+];
+
 const JOB_STATE_META: Record<
   JobState,
   {
@@ -249,6 +255,12 @@ function JobsPage() {
     stageOutputs.find((step) => step.stage === "voice_clone")?.audioPath ??
     selectedJob?.artifacts?.audioPath;
   const generatedVoiceAudioUrl = toPlayableFileUrl(generatedVoiceAudioPath);
+  const canRetrySelectedJob = selectedJob
+    ? RETRYABLE_STATES.includes(selectedJob.state)
+    : false;
+  const canCancelSelectedJob = selectedJob
+    ? selectedJob.state === "queued" || selectedJob.state === "running"
+    : false;
 
   useEffect(() => {
     const selectedProvider = enabledProviders.find(
@@ -922,10 +934,15 @@ function JobsPage() {
                                       阶段：{job.stage} · 队列位：
                                       {job.queuePosition}
                                     </p>
-                                    <p className="text-muted-foreground text-xs">
+                            <p className="text-muted-foreground text-xs">
                                       更新：
                                       {new Date(job.updatedAt).toLocaleString()}
                                     </p>
+                                    {job.errors.length > 0 ? (
+                                      <p className="mt-1 line-clamp-2 text-rose-700 text-xs">
+                                        错误原因：{job.errors[job.errors.length - 1].message}
+                                      </p>
+                                    ) : null}
                                   </div>
                                   <div className="min-w-28 text-right">
                                     <p className="font-mono text-sm">
@@ -1057,6 +1074,65 @@ function JobsPage() {
                         流程语音：{generatedVoiceAudioPath ?? "-"}
                       </p>
                     </div>
+                    <div className="mt-3 flex flex-wrap gap-2 border-border/60 border-t pt-3">
+                      <Button
+                        disabled={!canRetrySelectedJob}
+                        onClick={() => onRetry(selectedJob.jobId)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        重试任务
+                      </Button>
+                      <Button
+                        disabled={!canCancelSelectedJob}
+                        onClick={() => onCancel(selectedJob.jobId)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        取消任务
+                      </Button>
+                      <Button
+                        onClick={() => onSelectJob(selectedJob.jobId, "events")}
+                        size="sm"
+                        variant="outline"
+                      >
+                        查看完整事件流
+                      </Button>
+                    </div>
+                    {selectedJob.errors.length > 0 ? (
+                      <div className="mt-3 rounded-md border border-rose-300/70 bg-rose-50/60 p-3">
+                        <p className="font-medium text-rose-800 text-xs">
+                          错误原因（{selectedJob.errors.length}）
+                        </p>
+                        <ul className="mt-2 space-y-1">
+                          {selectedJob.errors.map((error, index) => (
+                            <li
+                              className="break-all text-rose-900 text-xs"
+                              key={`${error.code}-${index}`}
+                            >
+                              [{error.code}] {error.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {selectedJob.warnings.length > 0 ? (
+                      <div className="mt-3 rounded-md border border-amber-300/70 bg-amber-50/60 p-3">
+                        <p className="font-medium text-amber-800 text-xs">
+                          过程告警（{selectedJob.warnings.length}）
+                        </p>
+                        <ul className="mt-2 space-y-1">
+                          {selectedJob.warnings.map((warning, index) => (
+                            <li
+                              className="break-all text-amber-900 text-xs"
+                              key={`${warning.code}-${index}`}
+                            >
+                              [{warning.code}] {warning.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </section>
 
                   <section className="rounded-xl border border-border/70 bg-muted/20 p-3">
@@ -1099,6 +1175,17 @@ function JobsPage() {
                               <span className="text-muted-foreground text-xs">
                                 {step.exists ? "已产出" : "待产出"}
                               </span>
+                            </div>
+                            <div className="mb-2 grid grid-cols-1 gap-1 rounded-md border border-border/50 bg-muted/30 p-2 text-xs md:grid-cols-2">
+                              <p className="break-all text-muted-foreground">
+                                阶段ID：{step.stage}
+                              </p>
+                              <p className="text-muted-foreground">
+                                来源：{step.source}
+                              </p>
+                              <p className="break-all text-muted-foreground md:col-span-2">
+                                产出文件：{step.outputPath}
+                              </p>
                             </div>
 
                             <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-border/50 bg-muted/40 p-2 text-xs leading-relaxed">

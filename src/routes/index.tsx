@@ -25,7 +25,7 @@ import {
   listAgentJobs,
 } from "@/actions/agent";
 import { getAgentConfig } from "@/actions/agent-config";
-import { getAppVersion } from "@/actions/app";
+import { getAppVersion, getRuntimeDependencies } from "@/actions/app";
 import { listProviders } from "@/actions/provider";
 import { pickLocalFiles } from "@/actions/shell";
 import { listVoiceProfiles } from "@/actions/voice-clone";
@@ -102,6 +102,9 @@ function HomePage() {
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
   const [showRemotionGuideDialog, setShowRemotionGuideDialog] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [runtimeDependencies, setRuntimeDependencies] = useState<
+    Awaited<ReturnType<typeof getRuntimeDependencies>> | undefined
+  >(undefined);
 
   const enabledProviders = useMemo(
     () => providers.filter((provider) => provider.enabled),
@@ -126,6 +129,11 @@ function HomePage() {
     () => startGetAppVersion(() => getAppVersion().then(setAppVersion)),
     []
   );
+
+  const refreshRuntimeDependencies = useCallback(async () => {
+    const deps = await getRuntimeDependencies();
+    setRuntimeDependencies(deps);
+  }, []);
 
   useEffect(() => {
     const selectedProvider = enabledProviders.find(
@@ -275,6 +283,29 @@ function HomePage() {
       window.clearInterval(timer);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    refreshRuntimeDependencies().catch(() => {
+      // Runtime dependency warnings are best-effort only.
+    });
+
+    const timer = window.setInterval(() => {
+      refreshRuntimeDependencies().catch(() => {
+        // Runtime dependency warnings are best-effort only.
+      });
+    }, 30_000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [refreshRuntimeDependencies]);
+
+  const missingDependencies = useMemo(
+    () =>
+      runtimeDependencies?.items.filter((item) => item.status === "missing") ??
+      [],
+    [runtimeDependencies]
+  );
 
   async function onCreateJob() {
     if (!(form.providerId && form.model)) {
@@ -481,6 +512,31 @@ function HomePage() {
         </header>
 
         <div className="app-panel-body p-4">
+          {missingDependencies.length > 0 ? (
+            <section className="mb-3 rounded-lg border border-amber-300/70 bg-amber-50/60 p-3 text-amber-900 text-xs">
+              <p className="font-medium text-sm">
+                渲染环境未就绪（启动检测）
+              </p>
+              <p className="mt-1">
+                请修复以下运行时问题，否则任务可能在 render 阶段失败：
+              </p>
+              <ol className="mt-2 list-decimal space-y-1 pl-5">
+                {missingDependencies.map((item) => (
+                  <li key={item.id}>
+                    <span className="font-medium">{item.label}：</span>
+                    {item.installHint}
+                    <span className="ml-1 text-amber-800/80">
+                      （检测：{item.detail}）
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              <p className="mt-2 text-amber-800/80">
+                Chrome 由 Remotion 在运行时自动管理，无需手动安装。
+              </p>
+            </section>
+          ) : null}
+
           <div className="mb-3 flex items-center justify-between">
             <h3 className="flex items-center gap-2 font-medium text-sm">
               <Layers3 className="h-4 w-4" />

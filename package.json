@@ -7,9 +7,7 @@
   "private": true,
   "scripts": {
     "start": "electron-forge start",
-    "prepackage": "node ./scripts/prepare-remotion-binaries.cjs",
     "package": "electron-forge package",
-    "premake": "node ./scripts/prepare-remotion-binaries.cjs",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "check": "ultracite check",

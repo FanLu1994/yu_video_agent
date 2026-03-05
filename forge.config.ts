@@ -11,7 +11,7 @@ import type { ForgeConfig } from "@electron-forge/shared-types";
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    extraResource: [path.resolve(process.cwd(), "resources", "remotion-binaries")],
+    extraResource: [path.resolve(process.cwd(), "src", "remotion")],
   },
   rebuildConfig: {},
   makers: [

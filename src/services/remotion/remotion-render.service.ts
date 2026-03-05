@@ -1,7 +1,8 @@
-import { copyFile, mkdir, stat } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { app } from "electron";
 import type { AgentCompositionInput } from "@/remotion/Root";
+import { appLogger } from "@/services/logging/app-logger";
 import { getDataRootPath } from "@/services/storage/runtime-paths";
 
 export interface RenderAgentVideoInput {
@@ -18,16 +19,22 @@ export interface RenderAgentVideoResult {
 
 const DEFAULT_COMPOSITION_ID = "AgentNarration";
 const REMOTION_CHROME_MODE = "headless-shell";
-
 type RendererModule = typeof import("@remotion/renderer");
 type RemotionBinaryType = "compositor" | "ffmpeg" | "ffprobe";
 
 export class RemotionRenderService {
   private async resolveEntryPoint() {
-    const candidates = [
-      path.resolve(process.cwd(), "src", "remotion", "index.ts"),
-      path.resolve(process.cwd(), "src", "remotion", "index.tsx"),
-    ];
+    const candidates = app.isPackaged
+      ? [
+          path.join(process.resourcesPath, "remotion", "index.ts"),
+          path.join(process.resourcesPath, "remotion", "index.tsx"),
+          path.join(process.resourcesPath, "remotion-src", "index.ts"),
+          path.join(process.resourcesPath, "remotion-src", "index.tsx"),
+        ]
+      : [
+          path.resolve(process.cwd(), "src", "remotion", "index.ts"),
+          path.resolve(process.cwd(), "src", "remotion", "index.tsx"),
+        ];
 
     for (const candidate of candidates) {
       try {
@@ -39,48 +46,7 @@ export class RemotionRenderService {
     }
 
     throw new Error(
-      "Remotion entrypoint not found. Expected src/remotion/index.ts or src/remotion/index.tsx."
-    );
-  }
-
-  private getBrowserPlatform() {
-    if (process.platform === "win32") {
-      return "win64";
-    }
-
-    if (process.platform === "darwin") {
-      return process.arch === "arm64" ? "mac-arm64" : "mac-x64";
-    }
-
-    if (process.platform === "linux") {
-      return process.arch === "arm64" ? "linux-arm64" : "linux64";
-    }
-
-    throw new Error(
-      `Unsupported platform for Remotion browser download: ${process.platform}/${process.arch}`
-    );
-  }
-
-  private resolveManagedBrowserExecutable(dataRoot: string) {
-    const platform = this.getBrowserPlatform();
-    const downloadsRoot = path.join(
-      dataRoot,
-      ".remotion",
-      "chrome-headless-shell"
-    );
-
-    const executableName =
-      process.platform === "win32"
-        ? "chrome-headless-shell.exe"
-        : platform === "linux-arm64"
-          ? "headless_shell"
-          : "chrome-headless-shell";
-
-    return path.join(
-      downloadsRoot,
-      platform,
-      `chrome-headless-shell-${platform}`,
-      executableName
+      `Remotion entrypoint not found. Tried: ${candidates.join(", ")}`
     );
   }
 
@@ -100,10 +66,6 @@ export class RemotionRenderService {
     } finally {
       process.chdir(previousCwd);
     }
-
-    const browserExecutable = this.resolveManagedBrowserExecutable(dataRoot);
-    await stat(browserExecutable);
-    return browserExecutable;
   }
 
   private async ensureRuntimeBinaries(
@@ -116,9 +78,11 @@ export class RemotionRenderService {
       "ffmpeg",
       "ffprobe",
     ];
+    const sourceDirectories = new Set<string>();
 
     for (const type of binaryTypes) {
       const sourcePath = await this.resolveBinarySourcePath(renderer, type);
+      sourceDirectories.add(path.dirname(sourcePath));
       const targetPath = renderer.RenderInternals.getExecutablePath({
         type,
         indent: false,
@@ -129,6 +93,59 @@ export class RemotionRenderService {
       const shouldCopy = await this.shouldCopyBinary(sourcePath, targetPath);
       if (shouldCopy) {
         await copyFile(sourcePath, targetPath);
+      }
+    }
+
+    if (process.platform === "win32") {
+      await this.copyWindowsDllDependencies(
+        Array.from(sourceDirectories),
+        binariesDirectory
+      );
+    }
+
+    if (process.platform !== "win32") {
+      for (const type of binaryTypes) {
+        const binaryPath = path.join(
+          binariesDirectory,
+          this.getBinaryFileName(type)
+        );
+        try {
+          await chmod(binaryPath, 0o755);
+        } catch (error) {
+          appLogger.warn("Failed to set binary executable permission", {
+            binaryPath,
+            error,
+          });
+        }
+      }
+    }
+  }
+
+  private async copyWindowsDllDependencies(
+    sourceDirectories: string[],
+    binariesDirectory: string
+  ) {
+    const copiedDllNames = new Set<string>();
+
+    for (const sourceDirectory of sourceDirectories) {
+      const entries = await readdir(sourceDirectory);
+      for (const entry of entries) {
+        if (!entry.toLowerCase().endsWith(".dll")) {
+          continue;
+        }
+
+        if (copiedDllNames.has(entry)) {
+          continue;
+        }
+
+        const sourcePath = path.join(sourceDirectory, entry);
+        const targetPath = path.join(binariesDirectory, entry);
+        const shouldCopy = await this.shouldCopyBinary(sourcePath, targetPath);
+        if (shouldCopy) {
+          await copyFile(sourcePath, targetPath);
+        }
+
+        copiedDllNames.add(entry);
       }
     }
   }
@@ -149,38 +166,10 @@ export class RemotionRenderService {
     return type;
   }
 
-  private getPackagedBinarySourcePath(type: RemotionBinaryType) {
-    try {
-      if (!app.isPackaged) {
-        return undefined;
-      }
-
-      const resourcesRoot = path.resolve(app.getAppPath(), "..");
-      return path.join(
-        resourcesRoot,
-        "remotion-binaries",
-        `${process.platform}-${process.arch}`,
-        this.getBinaryFileName(type)
-      );
-    } catch {
-      return undefined;
-    }
-  }
-
   private async resolveBinarySourcePath(
     renderer: RendererModule,
     type: RemotionBinaryType
   ) {
-    const packagedBinaryPath = this.getPackagedBinarySourcePath(type);
-    if (packagedBinaryPath) {
-      try {
-        await stat(packagedBinaryPath);
-        return packagedBinaryPath;
-      } catch {
-        // Fallback to renderer-managed binary in development/runtime environments.
-      }
-    }
-
     return renderer.RenderInternals.getExecutablePath({
       type,
       indent: false,
@@ -201,6 +190,7 @@ export class RemotionRenderService {
 
   async renderAgentVideo({
     inputProps,
+    jobId,
     onProgress,
     outputDir,
   }: RenderAgentVideoInput): Promise<RenderAgentVideoResult> {
@@ -208,8 +198,11 @@ export class RemotionRenderService {
       import("@remotion/bundler"),
       import("@remotion/renderer"),
     ]);
-    console.log(`[REMOTION] Starting render for job ${jobId}`);
-    console.log(`[REMOTION] Input props:`, inputProps);
+
+    appLogger.info("Remotion render started", {
+      jobId,
+      inputProps,
+    });
 
     const entryPoint = await this.resolveEntryPoint();
     const videoPath = path.join(outputDir, "final", "video.mp4");
@@ -217,26 +210,35 @@ export class RemotionRenderService {
     const binariesDirectory = path.join(dataRoot, "remotion-binaries");
     await mkdir(path.dirname(videoPath), { recursive: true });
 
-    console.log(`[REMOTION] Entry point: ${entryPoint}`);
-    console.log(`[REMOTION] Output path: ${videoPath}`);
+    appLogger.info("Remotion render context resolved", {
+      jobId,
+      entryPoint,
+      videoPath,
+      dataRoot,
+      binariesDirectory,
+    });
 
     await this.ensureRuntimeBinaries(renderer, binariesDirectory);
-    const browserExecutable = await this.ensureManagedBrowser(
-      renderer,
-      dataRoot
-    );
-    console.log(`[REMOTION] Browser executable: ${browserExecutable}`);
+    await this.ensureManagedBrowser(renderer, dataRoot);
+    const browserExecutable =
+      process.env.REMOTION_BROWSER_EXECUTABLE?.trim() || undefined;
 
-    console.log(`[REMOTION] Starting bundle...`);
+    appLogger.info("Remotion API bundle started", {
+      jobId,
+      browserExecutable: browserExecutable ?? "auto",
+    });
+
     const serveUrl = await bundle({
       entryPoint,
-      onProgress: () => {
-        // Keep bundling progress internal. Render progress is surfaced to users.
+      onProgress: (progress) => {
+        if (progress >= 0.95) {
+          void onProgress?.(40);
+        }
       },
+      // Prevent cache path surprises inside packaged runtime.
+      enableCaching: false,
     });
-    console.log(`[REMOTION] Bundle completed. serveUrl: ${serveUrl}`);
 
-    console.log(`[REMOTION] Selecting composition...`);
     const composition = await renderer.selectComposition({
       id: DEFAULT_COMPOSITION_ID,
       serveUrl,
@@ -246,9 +248,8 @@ export class RemotionRenderService {
       binariesDirectory,
       browserExecutable,
     });
-    console.log(`[REMOTION] Composition selected. id: ${composition.id}, width: ${composition.width}, height: ${composition.height}`);
 
-    console.log(`[REMOTION] Starting renderMedia...`);
+    let lastLoggedPercent = -1;
     await renderer.renderMedia({
       codec: "h264",
       composition,
@@ -259,16 +260,26 @@ export class RemotionRenderService {
       chromeMode: REMOTION_CHROME_MODE,
       binariesDirectory,
       browserExecutable,
-      onProgress: (progress) => {
-        const percent = Math.max(
-          0,
-          Math.min(100, Math.round(progress.progress * 100))
-        );
-        console.log(`[REMOTION] Render progress: ${percent}% (frame: ${progress.frame}/${progress.framesInVideo})`);
-        void onProgress?.(percent);
+      onProgress: ({ progress }) => {
+        const percent = Math.max(0, Math.min(100, Math.round(progress * 100)));
+        if (percent !== lastLoggedPercent && (percent % 10 === 0 || percent >= 95)) {
+          lastLoggedPercent = percent;
+          appLogger.info("Remotion API render progress", { jobId, percent });
+          void onProgress?.(percent);
+        }
       },
     });
-    console.log(`[REMOTION] RenderMedia completed. Video saved to: ${videoPath}`);
+
+    const fileStats = await stat(videoPath);
+    if (fileStats.size === 0) {
+      throw new Error(`Remotion rendered empty video file: ${videoPath}`);
+    }
+
+    appLogger.info("Remotion output file verified", {
+      jobId,
+      videoPath,
+      sizeBytes: fileStats.size,
+    });
 
     return {
       compositionId: DEFAULT_COMPOSITION_ID,
