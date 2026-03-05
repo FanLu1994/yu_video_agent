@@ -257,6 +257,7 @@ export class RemotionRenderService {
     let lastLoggedPercent = -1;
     await renderer.renderMedia({
       codec: "h264",
+      audioCodec: "aac",
       composition,
       serveUrl,
       outputLocation: videoPath,
