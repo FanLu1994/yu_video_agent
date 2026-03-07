@@ -1,4 +1,4 @@
-export const REMOTION_TEMPLATE_IDS = ["typewriter"] as const;
+export const REMOTION_TEMPLATE_IDS = ["typewriter", "subtitle", "cards"] as const;
 
 export type RemotionTemplateId = (typeof REMOTION_TEMPLATE_IDS)[number];
 
@@ -17,6 +17,18 @@ export const REMOTION_TEMPLATE_OPTIONS: RemotionTemplateOption[] = [
     compositionId: "AgentNarrationTypewriter",
     label: "打字机",
     description: "逐字展示文本，配合光标闪烁，简洁大气。",
+  },
+  {
+    id: "subtitle",
+    compositionId: "AgentNarrationSubtitle",
+    label: "字幕滚动",
+    description: "底部固定字幕条，类似短视频风格。",
+  },
+  {
+    id: "cards",
+    compositionId: "AgentNarrationCards",
+    label: "卡片切换",
+    description: "卡片式展示，带堆叠动画效果。",
   },
 ];
 

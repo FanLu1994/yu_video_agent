@@ -4,6 +4,8 @@ import {
   AgentNarrationTypewriter,
   AgentNarrationTypewriterSchema,
 } from "./AgentNarrationTypewriter";
+import { AgentNarrationSubtitle } from "./AgentNarrationSubtitle";
+import { AgentNarrationCards } from "./AgentNarrationCards";
 
 export const AgentCompositionInputSchema = AgentNarrationTypewriterSchema.extend({
   durationSec: z.number().min(4).max(600),
@@ -49,16 +51,40 @@ export const RemotionRoot = () => {
   } satisfies AgentCompositionInput;
 
   return (
-    <Composition
-      id="AgentNarrationTypewriter"
-      component={AgentNarrationTypewriter}
-      durationInFrames={900}
-      fps={30}
-      width={1920}
-      height={1080}
-      defaultProps={commonDefaultProps}
-      schema={AgentCompositionInputSchema}
-      calculateMetadata={calculateMetadata}
-    />
+    <>
+      <Composition
+        id="AgentNarrationTypewriter"
+        component={AgentNarrationTypewriter}
+        durationInFrames={900}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={commonDefaultProps}
+        schema={AgentCompositionInputSchema}
+        calculateMetadata={calculateMetadata}
+      />
+      <Composition
+        id="AgentNarrationSubtitle"
+        component={AgentNarrationSubtitle}
+        durationInFrames={900}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={commonDefaultProps}
+        schema={AgentCompositionInputSchema}
+        calculateMetadata={calculateMetadata}
+      />
+      <Composition
+        id="AgentNarrationCards"
+        component={AgentNarrationCards}
+        durationInFrames={900}
+        fps={30}
+        width={1920}
+        height={1080}
+        defaultProps={commonDefaultProps}
+        schema={AgentCompositionInputSchema}
+        calculateMetadata={calculateMetadata}
+      />
+    </>
   );
 };
