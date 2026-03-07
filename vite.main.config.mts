@@ -30,11 +30,16 @@ export default defineConfig({
         "@remotion/renderer",
         "remotion",
         "electron",
+        "fsevents",
       ],
       // Improve treeshaking
       treeshake: {
         moduleSideEffects: false,
       },
     },
+  },
+  // Skip SSR-related processing
+  ssr: {
+    noExternal: true,
   },
 });
