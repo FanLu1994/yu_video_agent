@@ -113,3 +113,4 @@ resources/chrome-headless-shell-win64/
 # IDE
 .idea/
 .claude/
+examples/
