@@ -140,8 +140,9 @@ export class AgentRuntimeService {
       .filter(Boolean)
       .join(" ");
 
+    // 使用捕获组保留标点符号在每行末尾
     const lines = normalized
-      .split(/[。！？!?；;]+/g)
+      .split(/(?<=[。！？!?；;])/g)
       .map((line) => line.trim())
       .filter(Boolean)
       .slice(0, 8);
