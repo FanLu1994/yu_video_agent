@@ -71,7 +71,7 @@
     "@fontsource-variable/geist-mono": "^5.2.7",
     "@icons-pack/react-simple-icons": "^13.8.0",
     "@mariozechner/pi-agent-core": "^0.55.3",
-    "@mariozechner/pi-ai": "^0.55.3",
+    "@mariozechner/pi-ai": "^0.56.3",
     "@orpc/client": "^1.13.4",
     "@orpc/server": "^1.13.5",
     "@remotion/bundler": "^4.0.431",
