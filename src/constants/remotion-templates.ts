@@ -1,4 +1,5 @@
 export const REMOTION_TEMPLATE_IDS = [
+  "typewriter",
   "classic",
   "spotlight",
   "bulletin",
@@ -13,9 +14,15 @@ export interface RemotionTemplateOption {
   label: string;
 }
 
-export const DEFAULT_REMOTION_TEMPLATE_ID: RemotionTemplateId = "classic";
+export const DEFAULT_REMOTION_TEMPLATE_ID: RemotionTemplateId = "typewriter";
 
 export const REMOTION_TEMPLATE_OPTIONS: RemotionTemplateOption[] = [
+  {
+    id: "typewriter",
+    compositionId: "AgentNarrationTypewriter",
+    label: "打字机",
+    description: "逐字展示文本，配合光标闪烁，简洁大气。",
+  },
   {
     id: "classic",
     compositionId: "AgentNarrationClassic",
