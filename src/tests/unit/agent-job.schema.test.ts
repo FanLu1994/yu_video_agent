@@ -12,7 +12,7 @@ describe("createJobInputSchema", () => {
   it("accepts prompts and remotion config", () => {
     const parsed = createJobInputSchema.parse({
       ...BASE_INPUT,
-      remotionTemplateId: "spotlight",
+      remotionTemplateId: "typewriter",
       prompts: {
         systemPrompt: "你是编导",
         topicPrompt: "提炼标题",
@@ -35,7 +35,7 @@ describe("createJobInputSchema", () => {
     });
 
     expect(parsed.remotionConfig?.theme).toBe("aurora");
-    expect(parsed.remotionTemplateId).toBe("spotlight");
+    expect(parsed.remotionTemplateId).toBe("typewriter");
     expect(parsed.prompts?.scriptPrompt).toBe("生成脚本");
   });
 

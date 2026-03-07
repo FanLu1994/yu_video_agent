@@ -40,7 +40,7 @@ test("renders the first page", async () => {
 
   const title = await page.waitForSelector("h1");
   const text = (await title.textContent())?.trim();
-  expect(text).toBe("视频 Agent 控制台");
+  expect(text).toBe("视频 Agent 工作台");
 });
 
 test.afterAll(async () => {
