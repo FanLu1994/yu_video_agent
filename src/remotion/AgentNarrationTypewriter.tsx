@@ -3,15 +3,21 @@ import {
   AbsoluteFill,
   Easing,
   interpolate,
-  measureText,
   spring,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { AgentNarrationSchema } from "./AgentNarration";
 import { RemotionAudioTrack } from "./audio";
 
-export const AgentNarrationTypewriterSchema = AgentNarrationSchema;
+export const AgentNarrationTypewriterSchema = z.object({
+  title: z.string(),
+  subtitle: z.string().optional(),
+  scriptLines: z.array(z.string()),
+  accentColor: z.string(),
+  backgroundStartColor: z.string(),
+  backgroundEndColor: z.string(),
+  audioPath: z.string().optional(),
+});
 
 export type AgentNarrationTypewriterProps = z.infer<
   typeof AgentNarrationTypewriterSchema

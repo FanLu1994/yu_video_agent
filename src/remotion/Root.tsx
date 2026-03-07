@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { type CalculateMetadataFunction, Composition } from "remotion";
-import { AgentNarration, AgentNarrationSchema } from "./AgentNarration";
-import { AgentNarrationBulletin } from "./AgentNarrationBulletin";
-import { AgentNarrationSpotlight } from "./AgentNarrationSpotlight";
-import { AgentNarrationTypewriter } from "./AgentNarrationTypewriter";
+import {
+  AgentNarrationTypewriter,
+  AgentNarrationTypewriterSchema,
+} from "./AgentNarrationTypewriter";
 
-export const AgentCompositionInputSchema = AgentNarrationSchema.extend({
+export const AgentCompositionInputSchema = AgentNarrationTypewriterSchema.extend({
   durationSec: z.number().min(4).max(600),
   fps: z.number().int().min(12).max(60),
   height: z.number().int().min(360).max(4096),
@@ -18,7 +18,7 @@ const calculateMetadata: CalculateMetadataFunction<AgentCompositionInput> = ({
   props,
 }) => {
   const estimatedByLines = Math.max(
-    Math.ceil(props.scriptLines.length * props.fps * 3.2),
+    Math.ceil(props.scriptLines.length * props.fps * 4),
     Math.ceil(props.durationSec * props.fps)
   );
 
@@ -49,51 +49,16 @@ export const RemotionRoot = () => {
   } satisfies AgentCompositionInput;
 
   return (
-    <>
-      <Composition
-        id="AgentNarrationClassic"
-        component={AgentNarration}
-        durationInFrames={900}
-        fps={30}
-        width={1920}
-        height={1080}
-        defaultProps={commonDefaultProps}
-        schema={AgentCompositionInputSchema}
-        calculateMetadata={calculateMetadata}
-      />
-      <Composition
-        id="AgentNarrationSpotlight"
-        component={AgentNarrationSpotlight}
-        durationInFrames={900}
-        fps={30}
-        width={1920}
-        height={1080}
-        defaultProps={commonDefaultProps}
-        schema={AgentCompositionInputSchema}
-        calculateMetadata={calculateMetadata}
-      />
-      <Composition
-        id="AgentNarrationBulletin"
-        component={AgentNarrationBulletin}
-        durationInFrames={900}
-        fps={30}
-        width={1920}
-        height={1080}
-        defaultProps={commonDefaultProps}
-        schema={AgentCompositionInputSchema}
-        calculateMetadata={calculateMetadata}
-      />
-      <Composition
-        id="AgentNarrationTypewriter"
-        component={AgentNarrationTypewriter}
-        durationInFrames={900}
-        fps={30}
-        width={1920}
-        height={1080}
-        defaultProps={commonDefaultProps}
-        schema={AgentCompositionInputSchema}
-        calculateMetadata={calculateMetadata}
-      />
-    </>
+    <Composition
+      id="AgentNarrationTypewriter"
+      component={AgentNarrationTypewriter}
+      durationInFrames={900}
+      fps={30}
+      width={1920}
+      height={1080}
+      defaultProps={commonDefaultProps}
+      schema={AgentCompositionInputSchema}
+      calculateMetadata={calculateMetadata}
+    />
   );
 };
