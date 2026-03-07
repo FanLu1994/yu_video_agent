@@ -11,6 +11,7 @@ import {
   Play,
   Sliders,
   SlidersHorizontal,
+  Video,
 } from "lucide-react";
 import {
   type DragEvent,
@@ -52,6 +53,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { VideoPlayer } from "@/components/video-player";
 import {
   extractDroppedFilePaths,
   mergeMultilineItems,
@@ -115,6 +117,9 @@ function HomePage() {
   const [showUsageDialog, setShowUsageDialog] = useState(false);
   const [showNewTaskDialog, setShowNewTaskDialog] = useState(false);
   const [showRemotionGuideDialog, setShowRemotionGuideDialog] = useState(false);
+  const [previewVideoJobId, setPreviewVideoJobId] = useState<string | null>(
+    null
+  );
   const [isPending, startTransition] = useTransition();
   const [runtimeDependencies, setRuntimeDependencies] = useState<
     Awaited<ReturnType<typeof getRuntimeDependencies>> | undefined
@@ -664,6 +669,16 @@ function HomePage() {
                   </div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
+                  {job.state === "completed" && job.artifacts?.videoPath ? (
+                    <Button
+                      onClick={() => setPreviewVideoJobId(job.jobId)}
+                      size="sm"
+                      variant="default"
+                    >
+                      <Video className="h-4 w-4" />
+                      预览视频
+                    </Button>
+                  ) : null}
                   <Button asChild size="sm" variant="ghost">
                     <Link
                       state={{ selectedJobId: job.jobId } as never}
@@ -1152,6 +1167,37 @@ function HomePage() {
             </DialogDescription>
           </DialogHeader>
           <RemotionBestPracticesPanel />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setPreviewVideoJobId(null);
+          }
+        }}
+        open={!!previewVideoJobId}
+      >
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Video className="h-5 w-5" />
+              视频预览
+            </DialogTitle>
+            <DialogDescription>
+              {previewVideoJobId
+                ? `任务 ${previewVideoJobId.slice(0, 12)}...`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <VideoPlayer
+              src={
+                jobs.find((job) => job.jobId === previewVideoJobId)?.artifacts
+                  ?.videoPath
+              }
+            />
+          </div>
         </DialogContent>
       </Dialog>
     </div>

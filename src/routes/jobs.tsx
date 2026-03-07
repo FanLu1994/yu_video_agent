@@ -35,6 +35,7 @@ import {
 } from "@/actions/voice-selection";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { VideoPlayer } from "@/components/video-player";
 import {
   DEFAULT_REMOTION_TEMPLATE_ID,
   REMOTION_TEMPLATE_OPTIONS,
@@ -1262,6 +1263,15 @@ function JobsPage() {
                         流程语音：{generatedVoiceAudioPath ?? "-"}
                       </p>
                     </div>
+
+                    {selectedJob.state === "completed" &&
+                    selectedJob.artifacts?.videoPath ? (
+                      <div className="mt-4">
+                        <h4 className="mb-2 font-medium text-sm">视频预览</h4>
+                        <VideoPlayer src={selectedJob.artifacts.videoPath} />
+                      </div>
+                    ) : null}
+
                     <div className="mt-3 flex flex-wrap gap-2 border-border/60 border-t pt-3">
                       <Button
                         disabled={!canRetrySelectedJob}
